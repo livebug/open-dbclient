@@ -17,6 +17,8 @@ import { HealthMonitor } from './health/HealthMonitor';
 import { MetadataCache } from './sql/metadataCache';
 import { SqlCompletionProvider } from './sql/completionProvider';
 import { SqlCodeLensProvider } from './sql/codeLensProvider';
+import { VariableService } from './service/VariableService';
+import { VariablePanel } from './webview/VariablePanel';
 import { VirtualDocumentProvider } from './util/VirtualDocuments';
 import { JavaNotFoundError } from './bridge/JavaLocator';
 import { registerConnectionCommands, setDriverContext } from './commands/connectionCommands';
@@ -57,6 +59,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const metadataCache = new MetadataCache(metadata, connections);
   const completion = new SqlCompletionProvider(metadataCache, binding, connections);
   const codeLens = new SqlCodeLensProvider();
+  const variables = new VariableService(context);
 
   // Completion is instant once the table list is cached, so it is fetched in the background as soon
   // as a connection comes up. On a database with thousands of tables that prefetch is slow enough to
@@ -85,6 +88,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     templates,
     history,
     metadataCache,
+    variables,
     tree,
     binding,
     virtualDocuments,
@@ -99,6 +103,24 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   });
   tree.attachView(connectionsView);
 
+  /**
+   * Keeps the variable panel in step with the active script.
+   *
+   * It appears when the script has placeholders and closes when it does not, so it never lingers over
+   * a file that has no variables. Values live in the service, so closing and reopening the panel -
+   * or switching between two scripts that share a placeholder - loses nothing.
+   */
+  const syncVariables = (document: vscode.TextDocument | undefined): void => {
+    variables.track(document);
+    if (variables.activeCount > 0) {
+      VariablePanel.show(variables);
+    } else {
+      VariablePanel.hide();
+    }
+  };
+
+  let variableTracking: ReturnType<typeof setTimeout> | undefined;
+
   context.subscriptions.push(
     bridge,
     store,
@@ -111,6 +133,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     health,
     completion,
     codeLens,
+    variables,
     onConnectionStateChanged,
     virtualDocuments,
     virtualDocuments.register(),
@@ -126,7 +149,23 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
     // Registered once for the SQL language; the provider itself honours the enable setting.
     vscode.languages.registerCodeLensProvider({ language: 'sql' }, codeLens),
+
+    vscode.window.onDidChangeActiveTextEditor((editor) => syncVariables(editor?.document)),
+    vscode.workspace.onDidChangeTextDocument((event) => {
+      // Typing a new placeholder should register it, but not on every keystroke: repainting the panel
+      // mid-edit would fight the user for focus in the inputs.
+      if (event.document !== vscode.window.activeTextEditor?.document) {
+        return;
+      }
+      if (variableTracking !== undefined) {
+        clearTimeout(variableTracking);
+      }
+      variableTracking = setTimeout(() => syncVariables(event.document), 400);
+    }),
   );
+
+  // A script may already be open when the extension activates.
+  syncVariables(vscode.window.activeTextEditor?.document);
 
   // Drivers are loaded eagerly so the connection view can show its empty state correctly, and so a
   // missing Java installation is reported at startup rather than on the user's first query.
@@ -146,6 +185,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (event.affectsConfiguration(Config.codeLens)) {
         codeLens.refresh();
       }
+    }),
+
+    vscode.commands.registerCommand(Commands.showVariables, () => {
+      syncVariables(vscode.window.activeTextEditor?.document);
+      VariablePanel.focus();
     }),
 
     // Result panels cannot survive the process that holds their rows.

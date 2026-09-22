@@ -200,8 +200,25 @@ INSERT INTO users (|        -- 补全列名
 - 补全逻辑跑在扩展进程内(**不走 IPC**),所以不占用每次按键的往返延迟
 - 元数据按需加载并做 LRU 缓存(`intellisense.columnCacheLimit`)
 
-### 执行
+### 脚本参数(变量)
 
+脚本里的 `${名字}` 会被当作参数。打开含参数的脚本时,下方会自动弹出参数面板 —— 支持随便改,
+行得通再执行:
+
+```sql
+SELECT * FROM orders
+WHERE created_at >= ${V_DATE}
+  AND status = ${V_STATUS};
+```
+
+- 变量样式可自定义:设置 `variables.pattern` 为正则(**需带一个捕获组**作为变量名)。不写捕获组
+  时整个匹配当作变量名
+- 变量值按**工作区**保存,同一个 `${V_DATE}` 在各脚本里含义一致
+- 执行前替换;有**任何一个变量没填值就拒绝执行**并提示是哪个 —— 把 `> ${V_DATE}` 换成 `> `
+  比直接报错更危险
+- 想改用 `:V_DATE` 这种风格,把 pattern 改成 `:([A-Za-z_][A-Za-z0-9_]*)` 即可
+
+### 执行
 - 支持多条语句,执行前会自动剥离注释(块注释支持嵌套)
 - `INSERT`/`UPDATE`/`DELETE`/`DROP`/`TRUNCATE` 等破坏性语句默认二次确认
   (`open-dbclient.query.confirmDangerous`)
@@ -276,6 +293,7 @@ Markdown 报告,包含:
 | Run All Queries | 执行整个文件所有语句 |
 | Cancel Running Query | 取消正在跑的查询 |
 | Select Top 200 Rows | 从树上直接预览表数据 |
+| Show Query Variables | 打开参数面板 |
 | **导出** | |
 | Export Result... | 导出当前结果网格 |
 | Export Table... | 不查询,直接导出整张表 |
@@ -324,6 +342,7 @@ Markdown 报告,包含:
 | `query.fetchSize` | number | `200` | JDBC fetch size |
 | `query.maxRows` | number | `100000` | 每次执行的最大取数行数;`0` 表示不限。命中上限会标记为截断 |
 | `query.codeLens` | boolean | `true` | 是否在每条 SQL 上方显示「Run」按钮 |
+| `variables.pattern` | string | `\$\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}` | 变量匹配正则,需带一个捕获组作为变量名 |
 | `query.confirmDangerous` | boolean | `true` | 破坏性语句执行前确认 |
 | `result.openIn` | string | `"below"` | 结果面板位置:`below`(上下分屏)或 `beside`(左右分屏) |
 | `result.maxCacheBytes` | number | `536870912` | 磁盘结果缓存上限(512 MiB),超出按 LRU 淘汰 |

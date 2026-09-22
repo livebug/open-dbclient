@@ -122,6 +122,22 @@ if (existsSync(join(root, 'CHANGELOG.md'))) {
   }
 }
 
+// --- defaults that exist in two places ------------------------------------------------------------
+
+// A default written both in the manifest and in the code is a value that will eventually disagree
+// with itself, and the symptom is behaviour that depends on whether the user happened to set the
+// setting explicitly. Compared here rather than left to a comment asking people to keep them in sync.
+const { DEFAULT_VARIABLE_PATTERN } = await import('../src/sql/variables.ts');
+const declaredPattern = properties['open-dbclient.variables.pattern']?.default;
+if (declaredPattern === DEFAULT_VARIABLE_PATTERN) {
+  check('the variable pattern default matches the code');
+} else {
+  fail(
+    `the variable pattern default differs: package.json has ${JSON.stringify(declaredPattern)}, ` +
+      `src/sql/variables.ts has ${JSON.stringify(DEFAULT_VARIABLE_PATTERN)}`,
+  );
+}
+
 // --- result ---------------------------------------------------------------------------------------
 
 if (problems.length > 0) {

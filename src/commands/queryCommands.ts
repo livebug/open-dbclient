@@ -8,6 +8,7 @@ import type { DatabaseTreeNode, TableNode } from '../tree/nodeTypes';
 import { qualifiedName } from '../tree/nodeTypes';
 import type { HistoryNode } from '../tree/HistoryTreeProvider';
 import { isSqlDocument } from '../service/SqlEditorBinding';
+import { VariablePanel } from '../webview/VariablePanel';
 import { ResultPanel } from '../webview/ResultPanel';
 import {
   isDestructive,
@@ -208,8 +209,22 @@ async function runSingleStatement(
   dependencies: CommandDependencies,
   editor: vscode.TextEditor,
   profile: ConnectionProfile,
-  sql: string,
+  rawSql: string,
 ): Promise<void> {
+  // Parameters are resolved here rather than at each call site, so the code lens, the keybinding and
+  // "Run again" all behave the same way. Re-running therefore picks up edits to the values.
+  const resolved = dependencies.variables.resolve(rawSql);
+  if (resolved.missing.length > 0) {
+    // Placeholders without a value are left in the statement rather than blanked out, and the run is
+    // refused: sending `> ` to a database would either fail confusingly or query something else.
+    VariablePanel.show(dependencies.variables);
+    void vscode.window.showWarningMessage(
+      `Fill in ${resolved.missing.map((name) => `\${${name}}`).join(', ')} before running this statement.`,
+    );
+    return;
+  }
+  const sql = resolved.sql;
+
   const panel = await ResultPanel.show({
     key: `${profile.id}:${editor.document.uri.toString()}`,
     title: `Result - ${profileLabel(profile)}`,
@@ -393,9 +408,19 @@ async function exportFromEditor(dependencies: CommandDependencies): Promise<void
   }
 
   await ensureConnected(dependencies, profile);
+
+  const resolved = dependencies.variables.resolve(sql);
+  if (resolved.missing.length > 0) {
+    VariablePanel.show(dependencies.variables);
+    void vscode.window.showWarningMessage(
+      `Fill in ${resolved.missing.map((name) => `\${${name}}`).join(', ')} before exporting this statement.`,
+    );
+    return;
+  }
+
   await dependencies.exportService.exportResult({
     connectionId: profile.id,
-    sql,
+    sql: resolved.sql,
     suggestedName: profile.name.replace(/[^\w.-]+/g, '_') || 'export',
   });
 }

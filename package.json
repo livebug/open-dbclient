@@ -150,6 +150,12 @@
         "category": "DB Client"
       },
       {
+        "command": "open-dbclient.showVariables",
+        "title": "Show Query Variables",
+        "category": "DB Client",
+        "icon": "$(symbol-parameter)"
+      },
+      {
         "command": "open-dbclient.runQueryFromTree",
         "title": "Select Top 200 Rows",
         "category": "DB Client",
@@ -523,7 +529,8 @@
           "default": true,
           "markdownDescription": "Show a Run action above every statement in a SQL file."
         },
-        "open-dbclient.result.openIn": {          "type": "string",
+        "open-dbclient.result.openIn": {
+          "type": "string",
           "enum": [
             "below",
             "beside"
@@ -534,6 +541,11 @@
           ],
           "default": "below",
           "markdownDescription": "Where a result panel opens."
+        },
+        "open-dbclient.variables.pattern": {
+          "type": "string",
+          "default": "\\$\\{\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*\\}",
+          "markdownDescription": "Regular expression that finds a parameter in a SQL script, with one capture group for its name. The default matches `${V_DATE}`. Matching text with no capture group is used whole as the name. Values are substituted before the statement runs; a placeholder with no value stops the run rather than being replaced by an empty string."
         },
         "open-dbclient.result.maxCacheBytes": {
           "type": "number",
@@ -626,10 +638,10 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p media",
     "lint": "eslint src --ext ts",
     "pretest": "npm run compile && npm run bridge:compile",
-    "docs": "node scripts/check-docs.mjs",
+    "docs": "node --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-docs.mjs",
     "test": "npm run typecheck && npm run docs && npm run bridge:test && npm run test:unit",
     "bridge:test": "node scripts/build-bridge.mjs --test",
-    "test:unit": "node --test \"src/**/*.test.ts\"",
+    "test:unit": "node --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test \"src/**/*.test.ts\"",
     "smoke": "node scripts/smoke-test.mjs",
     "verify": "npm test && npm run bridge:compile && npm run smoke --",
     "icon": "node scripts/make-icon.mjs",

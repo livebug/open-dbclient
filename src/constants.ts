@@ -62,6 +62,7 @@ export const Commands = {
   refreshMetadataCache: `${EXTENSION_ID}.refreshMetadataCache`,
   filterTree: `${EXTENSION_ID}.filterTree`,
   clearFilter: `${EXTENSION_ID}.clearFilter`,
+  showVariables: `${EXTENSION_ID}.showVariables`,
 } as const;
 
 export type CommandId = (typeof Commands)[keyof typeof Commands];
@@ -102,6 +103,7 @@ export const Config = {
   confirmDangerous: `${EXTENSION_ID}.query.confirmDangerous`,
   resultMaxCacheBytes: `${EXTENSION_ID}.result.maxCacheBytes`,
   resultOpenIn: `${EXTENSION_ID}.result.openIn`,
+  variablePattern: `${EXTENSION_ID}.variables.pattern`,
   intellisenseEnabled: `${EXTENSION_ID}.intellisense.enabled`,
   intellisensePrefetchTables: `${EXTENSION_ID}.intellisense.prefetchTables`,
   intellisenseColumnCacheLimit: `${EXTENSION_ID}.intellisense.columnCacheLimit`,

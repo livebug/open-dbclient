@@ -10,6 +10,7 @@ import type { MetadataService } from '../service/MetadataService';
 import type { SqlEditorBinding } from '../service/SqlEditorBinding';
 import type { QueryHistoryStore } from '../service/QueryHistoryStore';
 import type { MetadataCache } from '../sql/metadataCache';
+import type { VariableService } from '../service/VariableService';
 import type { DatabaseTreeProvider } from '../tree/DatabaseTreeProvider';
 import type { VirtualDocumentProvider } from '../util/VirtualDocuments';
 
@@ -32,6 +33,7 @@ export interface CommandDependencies {
   readonly templates: ConnectionTemplates;
   readonly history: QueryHistoryStore;
   readonly metadataCache: MetadataCache;
+  readonly variables: VariableService;
   readonly tree: DatabaseTreeProvider;
   readonly binding: SqlEditorBinding;
   readonly virtualDocuments: VirtualDocumentProvider;

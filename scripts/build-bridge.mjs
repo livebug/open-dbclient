@@ -35,8 +35,11 @@ const release = process.argv.includes('--release');
  * Timestamp recorded for every entry in the jar.
  *
  * `jar` stamps entries with the wall-clock time by default, so two builds of identical sources
- * produce different bytes and a released jar cannot be checked by rebuilding it. Pinning the
- * timestamp means the jar is a function of the sources alone.
+ * produce different bytes, a released jar embeds the moment it happened to be built, and the jar
+ * cannot be compared against a rebuild. Pinning the timestamp removes that variable.
+ *
+ * Note this makes the jar reproducible only when the compiler matches as well: bytecode is not
+ * guaranteed to be identical across javac versions, so the JDK is still a variable.
  *
  * The value comes from SOURCE_DATE_EPOCH when CI sets it, otherwise from the commit time — which is
  * both deterministic and actually true of the sources, unlike the moment the build ran.

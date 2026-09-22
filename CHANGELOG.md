@@ -23,15 +23,22 @@
 - `scripts/check-docs.mjs`: 校验 README 中的设置名、命令面板标签、快捷键、视图、链接锚点与
   CHANGELOG 小节是否与 `package.json` 一致,并接入 `npm test`。这类错误不会让构建失败,
   但用户一用就会撞上
-- 桥的 `bridge.jar` 现在可复现:打包时用提交时间(CI 经 `SOURCE_DATE_EPOCH` 传入)而不是构建
-  时刻作为 ZIP 条目的时间戳,因此可以重建某个 tag 来校验发布产物
+- 打包 `bridge.jar` 时不再用构建时刻作为 ZIP 条目时间戳,改用提交时间(CI 经
+  `SOURCE_DATE_EPOCH` 传入)。这样时间戳不再是变量,同一个 JDK 下重建即可得到相同的 jar
 
 ### 一致性说明
 
-已逐项核对,不是估计:
+下面是**直接下载两个 Release 的 VSIX 逐项比对**得到的结论,不是估计:
 
-- `out/extension.js` 与 `media/result/main.js` 与 0.1.0 **逐字节相同**
-- `resources/bridge.jar` 的 **83 个条目内容与 0.1.0 完全相同**,差异只在 ZIP 条目时间戳
+| 文件 | 与 0.1.0 的关系 |
+|---|---|
+| `out/extension.js` | 逐字节相同 |
+| `media/result/main.js` | 逐字节相同 |
+| `resources/bridge.jar` | 83 个条目内容完全相同;仅 ZIP 条目时间戳不同(0.1.0 未固定时间戳) |
+| `README.md` | 有差异 —— 这正是本版存在的理由 |
+
+关于 jar 的可复现性:它以**同一个 JDK** 为前提。用不同版本的 javac 编译,生成的字节码并不保证
+一致 —— 实测用 JDK 21 重建 0.1.1,时间戳可以完全对上,但类文件字节与 `Created-By` 行都不同。
 
 ## [0.1.0] - 2026-09-22
 

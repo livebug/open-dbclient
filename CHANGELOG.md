@@ -3,6 +3,36 @@
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/),格式参考
 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.1.1] - 2026-09-22
+
+**扩展的行为与 0.1.0 完全相同。** 这一版只修正了随包发布的文档,并让构建产物可复现。
+如果你已经在用 0.1.0,从功能角度看没有升级的必要。
+
+发这一版的原因是:0.1.0 的 VSIX 是从 tag 所在提交构建的,而下面这些文档修正发生在那之后,
+所以 `v0.1.0` 里那份 `README.md` 是旧的。
+
+### 修复
+
+- README 列出的连接模板与实际不符:删去并不存在的 ClickHouse,补上遗漏的 MariaDB 与 GaussDB
+- README 把命令面板的调用路径写成 `Open DB Client: ...`,而命令实际贡献在 `DB Client` 分类下,
+  用户照着输是找不到的
+- README 里本地打包的产物名漏了版本号
+
+### 新增(仅开发,不影响扩展行为)
+
+- `scripts/check-docs.mjs`: 校验 README 中的设置名、命令面板标签、快捷键、视图、链接锚点与
+  CHANGELOG 小节是否与 `package.json` 一致,并接入 `npm test`。这类错误不会让构建失败,
+  但用户一用就会撞上
+- 桥的 `bridge.jar` 现在可复现:打包时用提交时间(CI 经 `SOURCE_DATE_EPOCH` 传入)而不是构建
+  时刻作为 ZIP 条目的时间戳,因此可以重建某个 tag 来校验发布产物
+
+### 一致性说明
+
+已逐项核对,不是估计:
+
+- `out/extension.js` 与 `media/result/main.js` 与 0.1.0 **逐字节相同**
+- `resources/bridge.jar` 的 **83 个条目内容与 0.1.0 完全相同**,差异只在 ZIP 条目时间戳
+
 ## [0.1.0] - 2026-09-22
 
 首个版本。
@@ -71,4 +101,5 @@
 - 不支持 SSH 隧道
 - 健康监控不含数据库服务端指标
 
+[0.1.1]: https://github.com/livebug/open-dbclient/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/livebug/open-dbclient/releases/tag/v0.1.0

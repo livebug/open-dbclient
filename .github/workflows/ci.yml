@@ -28,6 +28,11 @@ jobs:
       - name: Check out
         uses: actions/checkout@v7
 
+      # The bridge jar stamps its entries with this value instead of the wall clock, so the packaged
+      # jar is a function of the sources: rebuilding a release tag reproduces it byte for byte.
+      - name: Pin the build timestamp to the commit
+        run: echo "SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct)" >> "$GITHUB_ENV"
+
       - name: Set up Node 24
         uses: actions/setup-node@v7
         with:

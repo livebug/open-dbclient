@@ -11,7 +11,7 @@
  *   node scripts/build-bridge.mjs --test      # compile and run the bridge test suite
  */
 
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -30,6 +30,34 @@ const TARGET_RELEASE = '17';
 
 const runTests = process.argv.includes('--test');
 const release = process.argv.includes('--release');
+
+/**
+ * Timestamp recorded for every entry in the jar.
+ *
+ * `jar` stamps entries with the wall-clock time by default, so two builds of identical sources
+ * produce different bytes and a released jar cannot be checked by rebuilding it. Pinning the
+ * timestamp means the jar is a function of the sources alone.
+ *
+ * The value comes from SOURCE_DATE_EPOCH when CI sets it, otherwise from the commit time — which is
+ * both deterministic and actually true of the sources, unlike the moment the build ran.
+ */
+function jarTimestamp() {
+  const epoch = Number(process.env.SOURCE_DATE_EPOCH);
+  const seconds = Number.isFinite(epoch) && epoch > 0 ? epoch : commitEpoch();
+  // A date that is deliberately not "now": there is no correct value outside a git checkout.
+  const moment = seconds === null ? new Date(Date.UTC(1980, 0, 1)) : new Date(seconds * 1000);
+  return moment.toISOString().replace(/\.\d{3}Z$/, 'Z');
+}
+
+/** Commit time as a Unix timestamp, or null when git is unavailable or this is not a checkout. */
+function commitEpoch() {
+  const result = spawnSync('git', ['log', '-1', '--pretty=%ct'], { cwd: root, encoding: 'utf8' });
+  if (result.status !== 0) {
+    return null;
+  }
+  const seconds = Number.parseInt((result.stdout ?? '').trim(), 10);
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : null;
+}
 
 /** Recursively collects `.java` files. */
 function collectJavaFiles(dir) {
@@ -137,6 +165,8 @@ function main() {
     jarPath,
     '--main-class',
     MAIN_CLASS,
+    '--date',
+    jarTimestamp(),
     '-C',
     mainClassesDir,
     '.',

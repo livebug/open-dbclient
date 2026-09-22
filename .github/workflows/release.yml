@@ -1,0 +1,102 @@
+name: Release
+
+# Pushing a tag like `v0.1.0` is the whole release process: test, build, package, publish.
+# The tag name must match the version in package.json, which is checked before anything is built.
+on:
+  push:
+    tags:
+      - 'v*'
+
+# `contents: write` is what allows the job to create the release and attach the VSIX to it.
+permissions:
+  contents: write
+
+env:
+  DRIVER_DIR: ${{ runner.temp }}/jdbc-drivers
+
+jobs:
+  release:
+    name: Publish ${{ github.ref_name }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # Failing here is deliberate: the alternative is publishing a tag whose name disagrees with
+      # the extension's own version, which users then cannot tell apart from any other build.
+      - name: Check the tag against package.json
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if [ "${GITHUB_REF_NAME}" != "v${version}" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match package.json version ${version}."
+            echo "Bump package.json to the new version, commit, then tag that commit."
+            exit 1
+          fi
+          echo "Releasing open-dbclient ${version}"
+          echo "VERSION=${version}" >> "$GITHUB_ENV"
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Nothing is published unless the suite is green.
+      - name: Unit tests
+        run: npm test
+
+      - name: Fetch a real JDBC driver for the end-to-end checks
+        run: |
+          mkdir -p "$DRIVER_DIR"
+          curl -fsSL -o "$DRIVER_DIR/sqlite-jdbc.jar" \
+            https://repo1.maven.org/maven2/org/xerial/sqlite-jdbc/3.47.1.0/sqlite-jdbc-3.47.1.0.jar
+          curl -fsSL -o "$DRIVER_DIR/slf4j-api.jar" \
+            https://repo1.maven.org/maven2/org/slf4j/slf4j-api/2.0.16/slf4j-api-2.0.16.jar
+
+      - name: End-to-end checks
+        run: npm run smoke -- "$DRIVER_DIR"
+
+      - name: Package the extension
+        run: npm run package -- --no-verify
+
+      # The CHANGELOG section for this version makes a far better release body than a commit list.
+      # When there is no section the release falls back to GitHub's generated notes.
+      - name: Build the release notes from CHANGELOG.md
+        run: |
+          mkdir -p build
+          if node scripts/extract-changelog.mjs "$VERSION" > build/release-notes.md; then
+            echo "Using the CHANGELOG section as the release notes."
+            echo "NOTES_FILE=build/release-notes.md" >> "$GITHUB_ENV"
+          else
+            echo "No CHANGELOG section for ${VERSION}; falling back to generated notes."
+            rm -f build/release-notes.md
+            echo "NOTES_FILE=" >> "$GITHUB_ENV"
+          fi
+
+      # `gh` is preinstalled on GitHub runners, so no third-party release action is needed.
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          shopt -s nullglob
+          assets=(build/*.vsix)
+          if [ ${#assets[@]} -eq 0 ]; then
+            echo "::error::The packaging step produced no VSIX."
+            exit 1
+          fi
+
+          tag="v${VERSION}"
+          if [ -n "${NOTES_FILE}" ]; then
+            gh release create "$tag" "${assets[@]}" --title "$tag" --notes-file "$NOTES_FILE"
+          else
+            gh release create "$tag" "${assets[@]}" --title "$tag" --generate-notes
+          fi

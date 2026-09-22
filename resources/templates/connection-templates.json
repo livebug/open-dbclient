@@ -1,0 +1,75 @@
+{
+  "$comment": [
+    "Optional convenience templates for the connection form. These are pure data: they only",
+    "prefill a JDBC URL prefix and a driver class name so users do not have to memorise them.",
+    "Nothing in the extension branches on database type - a template is not a dialect.",
+    "",
+    "Users can override this file by placing their own copy at",
+    "<globalStorage>/templates/connection-templates.json . Entries are merged by `id`,",
+    "so a user entry with the same id replaces the built-in one.",
+    "",
+    "`jdbcUrlTemplate` mirrors the connection form fields. `{host}` `{port}` `{database}` and",
+    "`{properties}` are substituted with what the user typed; anything else is left literal."
+  ],
+  "version": 1,
+  "templates": [
+    {
+      "id": "custom",
+      "label": "Custom",
+      "description": "Type the JDBC URL and driver class yourself.",
+      "driverClassName": "",
+      "jdbcUrlTemplate": "",
+      "defaultPort": null
+    },
+    {
+      "id": "mysql",
+      "label": "MySQL / MariaDB",
+      "driverClassName": "com.mysql.cj.jdbc.Driver",
+      "jdbcUrlTemplate": "jdbc:mysql://{host}:{port}/{database}",
+      "defaultPort": 3306
+    },
+    {
+      "id": "postgresql",
+      "label": "PostgreSQL",
+      "driverClassName": "org.postgresql.Driver",
+      "jdbcUrlTemplate": "jdbc:postgresql://{host}:{port}/{database}",
+      "defaultPort": 5432
+    },
+    {
+      "id": "opengauss",
+      "label": "openGauss / GaussDB",
+      "driverClassName": "org.opengauss.Driver",
+      "jdbcUrlTemplate": "jdbc:opengauss://{host}:{port}/{database}",
+      "defaultPort": 5432,
+      "note": "Some GaussDB builds only accept the PostgreSQL-flavoured driver entry point; if the class above is not found, try org.postgresql.Driver with the same URL."
+    },
+    {
+      "id": "hive",
+      "label": "Apache Hive / Hive-compatible (e.g. Transwarp Inceptor)",
+      "driverClassName": "org.apache.hive.jdbc.HiveDriver",
+      "jdbcUrlTemplate": "jdbc:hive2://{host}:{port}/{database}",
+      "defaultPort": 10000
+    },
+    {
+      "id": "sqlserver",
+      "label": "SQL Server",
+      "driverClassName": "com.microsoft.sqlserver.jdbc.SQLServerDriver",
+      "jdbcUrlTemplate": "jdbc:sqlserver://{host}:{port};databaseName={database}",
+      "defaultPort": 1433
+    },
+    {
+      "id": "oracle",
+      "label": "Oracle",
+      "driverClassName": "oracle.jdbc.OracleDriver",
+      "jdbcUrlTemplate": "jdbc:oracle:thin:@{host}:{port}:{database}",
+      "defaultPort": 1521
+    },
+    {
+      "id": "sqlite",
+      "label": "SQLite",
+      "driverClassName": "org.sqlite.JDBC",
+      "jdbcUrlTemplate": "jdbc:sqlite:{database}",
+      "defaultPort": null
+    }
+  ]
+}

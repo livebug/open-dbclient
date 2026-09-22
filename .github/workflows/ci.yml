@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A push and a PR against the same branch would otherwise run the suite twice for one change.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  DRIVER_DIR: ${{ runner.temp }}/jdbc-drivers
+
+jobs:
+  build:
+    name: Build and test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      # The bridge is plain `javac` — no Maven, no Gradle, and no compile-time dependencies.
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Show toolchain versions
+        run: |
+          node --version
+          npm --version
+          java -version
+          javac -version
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Typechecks TypeScript, runs the Java unit tests and the SQL context tests.
+      - name: Unit tests
+        run: npm test
+
+      - name: Fetch a real JDBC driver for the end-to-end checks
+        run: |
+          mkdir -p "$DRIVER_DIR"
+          curl -fsSL -o "$DRIVER_DIR/sqlite-jdbc.jar" \
+            https://repo1.maven.org/maven2/org/xerial/sqlite-jdbc/3.47.1.0/sqlite-jdbc-3.47.1.0.jar
+          curl -fsSL -o "$DRIVER_DIR/slf4j-api.jar" \
+            https://repo1.maven.org/maven2/org/slf4j/slf4j-api/2.0.16/slf4j-api-2.0.16.jar
+
+      # Drives the real bridge over the real protocol with a real driver, and writes real files.
+      - name: End-to-end checks
+        run: npm run smoke -- "$DRIVER_DIR"
+
+      # Runs the full test suite again via `vscode:prepublish`; see scripts/package.mjs.
+      - name: Package the extension
+        run: npm run package -- --no-verify
+
+      - name: Upload the VSIX
+        uses: actions/upload-artifact@v4
+        with:
+          name: open-dbclient-vsix
+          path: build/*.vsix
+          if-no-files-found: error

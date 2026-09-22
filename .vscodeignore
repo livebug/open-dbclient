@@ -1,0 +1,24 @@
+.vscode/**
+.vscode-test/**
+src/**
+bridge/src/**
+bridge/out/**
+bridge/target/**
+scripts/**
+**/*.ts
+**/*.map
+.gitignore
+.eslintrc.json
+eslint.config.mjs
+tsconfig.json
+media/tsconfig.json
+esbuild.mjs
+**/node_modules/**
+out/test/**
+.build/**
+
+# CI and packaging output: never part of the extension itself
+.github/**
+build/**
+package-lock.json
+**/*.vsix

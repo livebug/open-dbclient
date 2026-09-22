@@ -1,0 +1,13 @@
+# Everyone on this project reads and writes LF; the Java sources in particular are compiled with
+# -encoding UTF-8 and the bridge's protocol frames are newline-delimited.
+* text=auto eol=lf
+
+*.png binary
+*.jar binary
+*.vsix binary
+*.ico binary
+
+# Generated during the build. Kept in the tree so that cloning and packaging is a single step, but
+# not worth showing in diffs or in the language statistics.
+media/result/main.js linguist-generated=true -diff
+resources/bridge.jar linguist-generated=true -diff

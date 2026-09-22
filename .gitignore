@@ -1,0 +1,25 @@
+node_modules/
+out/
+dist/
+*.vsix
+build/
+
+# Screenshot/asset scratch space
+.media-scratch/
+
+# Compiled webview bundles (generated from media/**/main.ts)
+media/result/main.js
+media/result/main.js.map
+media/health/main.js
+media/health/main.js.map
+
+# Compiled bridge artifacts
+bridge/out/
+bridge/target/
+resources/bridge.jar
+
+# Build scratch space
+.build/
+
+.vscode-test/
+.eslintcache

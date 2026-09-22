@@ -1,0 +1,39 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "type": "npm",
+      "script": "compile",
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": ["$tsc"],
+      "label": "npm: compile"
+    },
+    {
+      "type": "npm",
+      "script": "watch",
+      "isBackground": true,
+      "problemMatcher": ["$tsc-watch"],
+      "label": "npm: watch"
+    },
+    {
+      "type": "npm",
+      "script": "typecheck",
+      "problemMatcher": ["$tsc"],
+      "label": "npm: typecheck"
+    },
+    {
+      "type": "npm",
+      "script": "bridge:compile",
+      "group": "build",
+      "problemMatcher": [],
+      "label": "npm: bridge:compile"
+    },
+    {
+      "type": "npm",
+      "script": "bridge:test",
+      "group": "test",
+      "problemMatcher": [],
+      "label": "npm: bridge:test"
+    }
+  ]
+}

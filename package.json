@@ -1,0 +1,599 @@
+{
+  "name": "open-dbclient",
+  "displayName": "Open DB Client",
+  "description": "Universal JDBC database client: connect, SQL IntelliSense, execute, export, table structure and health monitoring.",
+  "version": "0.1.0",
+  "publisher": "open-dbclient",
+  "license": "MIT",
+  "icon": "media/icon/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/livebug/open-dbclient.git"
+  },
+  "bugs": {
+    "url": "https://github.com/livebug/open-dbclient/issues"
+  },
+  "homepage": "https://github.com/livebug/open-dbclient#readme",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other",
+    "Data Science"
+  ],
+  "keywords": [
+    "jdbc",
+    "database",
+    "sql",
+    "mysql",
+    "postgresql",
+    "opengauss",
+    "transwarp",
+    "query",
+    "export"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onStartupFinished",
+    "onLanguage:sql"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "open-dbclient",
+          "title": "Open DB Client",
+          "icon": "media/icon/database.svg"
+        }
+      ]
+    },
+    "views": {
+      "open-dbclient": [
+        {
+          "id": "open-dbclient.connections",
+          "name": "Connections",
+          "icon": "media/icon/database.svg"
+        },
+        {
+          "id": "open-dbclient.history",
+          "name": "Query History",
+          "icon": "media/icon/history.svg"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "open-dbclient.connections",
+        "contents": "No database connections yet.\n\nBefore connecting you need a JDBC driver jar. Open the driver folder and drop the jar in, then add a connection.\n\n[Add Connection](command:open-dbclient.addConnection)\n[Open Driver Folder](command:open-dbclient.openDriverFolder)"
+      }
+    ],
+    "commands": [
+      {
+        "command": "open-dbclient.addConnection",
+        "title": "Add Connection",
+        "category": "DB Client",
+        "icon": "$(add)"
+      },
+      {
+        "command": "open-dbclient.editConnection",
+        "title": "Edit Connection",
+        "category": "DB Client",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "open-dbclient.duplicateConnection",
+        "title": "Duplicate Connection",
+        "category": "DB Client",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "open-dbclient.deleteConnection",
+        "title": "Delete Connection",
+        "category": "DB Client",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "open-dbclient.testConnection",
+        "title": "Test Connection",
+        "category": "DB Client"
+      },
+      {
+        "command": "open-dbclient.connect",
+        "title": "Connect",
+        "category": "DB Client",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "open-dbclient.disconnect",
+        "title": "Disconnect",
+        "category": "DB Client",
+        "icon": "$(debug-disconnect)"
+      },
+      {
+        "command": "open-dbclient.selectConnection",
+        "title": "Attach This File to a Connection",
+        "category": "DB Client",
+        "icon": "$(database)"
+      },
+      {
+        "command": "open-dbclient.refreshNode",
+        "title": "Refresh",
+        "category": "DB Client",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "open-dbclient.refreshAll",
+        "title": "Refresh All",
+        "category": "DB Client",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "open-dbclient.openQuery",
+        "title": "New Query",
+        "category": "DB Client",
+        "icon": "$(new-file)"
+      },
+      {
+        "command": "open-dbclient.runQuery",
+        "title": "Run Query",
+        "category": "DB Client",
+        "icon": "$(play)"
+      },
+      {
+        "command": "open-dbclient.runAllQueries",
+        "title": "Run All Queries",
+        "category": "DB Client"
+      },
+      {
+        "command": "open-dbclient.runQueryFromTree",
+        "title": "Select Top 200 Rows",
+        "category": "DB Client",
+        "icon": "$(play)"
+      },
+      {
+        "command": "open-dbclient.cancelQuery",
+        "title": "Cancel Running Query",
+        "category": "DB Client"
+      },
+      {
+        "command": "open-dbclient.exportResult",
+        "title": "Export Result...",
+        "category": "DB Client",
+        "icon": "$(desktop-download)"
+      },
+      {
+        "command": "open-dbclient.exportTable",
+        "title": "Export Table...",
+        "category": "DB Client",
+        "icon": "$(desktop-download)"
+      },
+      {
+        "command": "open-dbclient.viewColumns",
+        "title": "Show Columns",
+        "category": "DB Client",
+        "icon": "$(list-flat)"
+      },
+      {
+        "command": "open-dbclient.viewIndexes",
+        "title": "Show Indexes",
+        "category": "DB Client",
+        "icon": "$(list-ordered)"
+      },
+      {
+        "command": "open-dbclient.generateDdl",
+        "title": "Generate DDL",
+        "category": "DB Client",
+        "icon": "$(code)"
+      },
+      {
+        "command": "open-dbclient.copyName",
+        "title": "Copy Name",
+        "category": "DB Client",
+        "icon": "$(clippy)"
+      },
+      {
+        "command": "open-dbclient.addDriverJar",
+        "title": "Add Driver Jar...",
+        "category": "DB Client",
+        "icon": "$(add)"
+      },
+      {
+        "command": "open-dbclient.openDriverFolder",
+        "title": "Open Driver Folder",
+        "category": "DB Client",
+        "icon": "$(folder-opened)"
+      },
+      {
+        "command": "open-dbclient.downloadDriver",
+        "title": "Download Driver from Maven Central...",
+        "category": "DB Client",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "open-dbclient.listDrivers",
+        "title": "List Loaded Drivers",
+        "category": "DB Client"
+      },
+      {
+        "command": "open-dbclient.restartBridge",
+        "title": "Restart JDBC Bridge",
+        "category": "DB Client",
+        "icon": "$(debug-restart)"
+      },
+      {
+        "command": "open-dbclient.showHealth",
+        "title": "Show JDBC Health",
+        "category": "DB Client",
+        "icon": "$(pulse)"
+      },
+      {
+        "command": "open-dbclient.refreshMetadataCache",
+        "title": "Refresh Metadata Cache",
+        "category": "DB Client",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "open-dbclient.insertHistoryEntry",
+        "title": "Insert Query Into Editor",
+        "category": "DB Client"
+      },
+      {
+        "command": "open-dbclient.deleteHistoryEntry",
+        "title": "Delete History Entry",
+        "category": "DB Client",
+        "icon": "$(close)"
+      },
+      {
+        "command": "open-dbclient.clearHistory",
+        "title": "Clear Query History",
+        "category": "DB Client",
+        "icon": "$(clear-all)"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "open-dbclient.runQuery",
+        "key": "ctrl+enter",
+        "mac": "cmd+enter",
+        "when": "editorLangId == sql && open-dbclient.hasActiveConnection"
+      },
+      {
+        "command": "open-dbclient.runAllQueries",
+        "key": "ctrl+shift+enter",
+        "mac": "cmd+shift+enter",
+        "when": "editorLangId == sql && open-dbclient.hasActiveConnection"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "open-dbclient.addConnection",
+          "when": "view == open-dbclient.connections",
+          "group": "navigation@1"
+        },
+        {
+          "command": "open-dbclient.refreshAll",
+          "when": "view == open-dbclient.connections",
+          "group": "navigation@2"
+        },
+        {
+          "command": "open-dbclient.showHealth",
+          "when": "view == open-dbclient.connections",
+          "group": "navigation@3"
+        },
+        {
+          "command": "open-dbclient.openDriverFolder",
+          "when": "view == open-dbclient.connections",
+          "group": "9_manage@1"
+        },
+        {
+          "command": "open-dbclient.addDriverJar",
+          "when": "view == open-dbclient.connections",
+          "group": "9_manage@2"
+        },
+        {
+          "command": "open-dbclient.downloadDriver",
+          "when": "view == open-dbclient.connections",
+          "group": "9_manage@3"
+        },
+        {
+          "command": "open-dbclient.restartBridge",
+          "when": "view == open-dbclient.connections",
+          "group": "9_manage@4"
+        },
+        {
+          "command": "open-dbclient.clearHistory",
+          "when": "view == open-dbclient.history",
+          "group": "navigation@1"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "open-dbclient.connect",
+          "when": "view == open-dbclient.connections && viewItem == connection.disconnected",
+          "group": "inline@1"
+        },
+        {
+          "command": "open-dbclient.disconnect",
+          "when": "view == open-dbclient.connections && viewItem == connection.connected",
+          "group": "inline@1"
+        },
+        {
+          "command": "open-dbclient.openQuery",
+          "when": "view == open-dbclient.connections && viewItem =~ /^connection/",
+          "group": "inline@2"
+        },
+        {
+          "command": "open-dbclient.runQueryFromTree",
+          "when": "view == open-dbclient.connections && viewItem =~ /^(table|view)$/",
+          "group": "inline@1"
+        },
+        {
+          "command": "open-dbclient.generateDdl",
+          "when": "view == open-dbclient.connections && viewItem =~ /^(table|view)$/",
+          "group": "inline@2"
+        },
+        {
+          "command": "open-dbclient.editConnection",
+          "when": "view == open-dbclient.connections && viewItem =~ /^connection/",
+          "group": "1_modify@1"
+        },
+        {
+          "command": "open-dbclient.duplicateConnection",
+          "when": "view == open-dbclient.connections && viewItem == connection.disconnected",
+          "group": "1_modify@2"
+        },
+        {
+          "command": "open-dbclient.testConnection",
+          "when": "view == open-dbclient.connections && viewItem == connection.disconnected",
+          "group": "1_modify@3"
+        },
+        {
+          "command": "open-dbclient.deleteConnection",
+          "when": "view == open-dbclient.connections && viewItem == connection.disconnected",
+          "group": "1_modify@4"
+        },
+        {
+          "command": "open-dbclient.refreshNode",
+          "when": "view == open-dbclient.connections && viewItem =~ /^(connection|folder|table|view|catalog|schema)/",
+          "group": "navigation@1"
+        },
+        {
+          "command": "open-dbclient.viewColumns",
+          "when": "view == open-dbclient.connections && viewItem =~ /^(table|view)$/",
+          "group": "2_view@1"
+        },
+        {
+          "command": "open-dbclient.viewIndexes",
+          "when": "view == open-dbclient.connections && viewItem == table",
+          "group": "2_view@2"
+        },
+        {
+          "command": "open-dbclient.exportTable",
+          "when": "view == open-dbclient.connections && viewItem =~ /^(table|view)$/",
+          "group": "2_view@3"
+        },
+        {
+          "command": "open-dbclient.copyName",
+          "when": "view == open-dbclient.connections && viewItem =~ /^(table|view|column|catalog|schema)$/",
+          "group": "3_copy@1"
+        },
+        {
+          "command": "open-dbclient.insertHistoryEntry",
+          "when": "view == open-dbclient.history",
+          "group": "inline@1"
+        },
+        {
+          "command": "open-dbclient.deleteHistoryEntry",
+          "when": "view == open-dbclient.history",
+          "group": "inline@2"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "open-dbclient.runQuery",
+          "when": "editorLangId == sql",
+          "group": "open-dbclient@1"
+        },
+        {
+          "command": "open-dbclient.runAllQueries",
+          "when": "editorLangId == sql",
+          "group": "open-dbclient@2"
+        },
+        {
+          "command": "open-dbclient.cancelQuery",
+          "when": "editorLangId == sql",
+          "group": "open-dbclient@3"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "open-dbclient.refreshNode",
+          "when": "false"
+        },
+        {
+          "command": "open-dbclient.runQueryFromTree",
+          "when": "false"
+        },
+        {
+          "command": "open-dbclient.insertHistoryEntry",
+          "when": "false"
+        },
+        {
+          "command": "open-dbclient.deleteHistoryEntry",
+          "when": "false"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Open DB Client",
+      "properties": {
+        "open-dbclient.javaHome": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Path to the Java installation used for the JDBC bridge. Leave empty to auto-detect from `JAVA_HOME` or `PATH`. Requires **Java 17 or newer**.",
+          "scope": "machine-overridable"
+        },
+        "open-dbclient.javaArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "markdownDescription": "Extra JVM arguments appended to the bridge command line, e.g. `--add-opens=java.base/java.lang=ALL-UNNAMED`. Useful for legacy JDBC drivers that need reflective access on Java 17+.",
+          "scope": "machine-overridable"
+        },
+        "open-dbclient.jvmMaxHeap": {
+          "type": "string",
+          "default": "1g",
+          "markdownDescription": "Maximum heap for the JDBC bridge process (equivalent to `-Xmx`). Defaults to `1g`."
+        },
+        "open-dbclient.driverPaths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "markdownDescription": "Extra locations to look for JDBC driver jars. Each entry may be a folder (scanned for `.jar` files directly inside it, not recursively) or a jar file itself. The folder managed by `DB Client: Add Driver Jar` is always scanned, so this is only needed for jars kept elsewhere.",
+          "scope": "machine-overridable"
+        },
+        "open-dbclient.driverClassNames": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "markdownDescription": "Driver classes to load explicitly, in addition to those jars advertise through `META-INF/services/java.sql.Driver`. Needed only for drivers that omit that file; without it such a driver cannot be loaded at all. Example: `com.vendor.jdbc.VendorDriver`.",
+          "scope": "machine-overridable"
+        },
+        "open-dbclient.connection.poolSize": {
+          "type": "number",
+          "default": 1,
+          "minimum": 1,
+          "maximum": 32,
+          "markdownDescription": "Maximum number of pooled JDBC connections per profile. The default of `1` behaves like a single long-lived connection, which suits interactive use. Raise it only if you run queries concurrently."
+        },
+        "open-dbclient.query.fetchSize": {
+          "type": "number",
+          "default": 200,
+          "minimum": 10,
+          "maximum": 10000,
+          "markdownDescription": "Rows transferred per fetch when browsing a result grid."
+        },
+        "open-dbclient.query.confirmDangerous": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Ask for confirmation before running statements that look destructive (`DROP`, `TRUNCATE`, `DELETE`/`UPDATE` without a `WHERE` clause)."
+        },
+        "open-dbclient.result.maxCacheBytes": {
+          "type": "number",
+          "default": 536870912,
+          "markdownDescription": "Maximum disk space (in bytes) the bridge may use for cached result sets. Least-recently-used results are evicted beyond this limit. Defaults to 512 MiB."
+        },
+        "open-dbclient.intellisense.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Enable SQL completion for tables, views, schemas, columns and keywords."
+        },
+        "open-dbclient.intellisense.prefetchTables": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Prefetch table names in the background right after connecting, so the first completion is instant. Disable this if your database has thousands of tables and connecting feels slow."
+        },
+        "open-dbclient.intellisense.columnCacheLimit": {
+          "type": "number",
+          "default": 500,
+          "minimum": 50,
+          "markdownDescription": "How many tables to keep column metadata for in the completion cache (LRU). Lower this to reduce memory on very large databases."
+        },
+        "open-dbclient.health.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Collect JDBC bridge health metrics (JVM memory, GC, pool, result cache, query statistics)."
+        },
+        "open-dbclient.health.refreshInterval": {
+          "type": "number",
+          "default": 2000,
+          "minimum": 500,
+          "markdownDescription": "How often the bridge pushes health metrics, in milliseconds."
+        },
+        "open-dbclient.health.showStatusBar": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Show a health summary in the status bar."
+        },
+        "open-dbclient.export.csv.delimiter": {
+          "type": "string",
+          "default": ",",
+          "enum": [
+            ",",
+            ";",
+            "\t",
+            "|"
+          ],
+          "enumDescriptions": [
+            "Comma",
+            "Semicolon",
+            "Tab",
+            "Pipe"
+          ],
+          "markdownDescription": "Field delimiter for CSV export."
+        },
+        "open-dbclient.export.csv.writeBom": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Write a UTF-8 BOM so Excel detects the encoding correctly. Turn off for tools that choke on a BOM."
+        },
+        "open-dbclient.export.excel.maxRowsPerSheet": {
+          "type": "number",
+          "default": 1048576,
+          "markdownDescription": "Row limit per Excel worksheet; further rows spill into additional sheets."
+        },
+        "open-dbclient.export.includeHeader": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Include a header row in CSV and Excel exports."
+        },
+        "open-dbclient.logLevel": {
+          "type": "string",
+          "default": "info",
+          "enum": [
+            "error",
+            "warn",
+            "info",
+            "debug",
+            "trace"
+          ],
+          "markdownDescription": "Verbosity of the \"DB Client\" output channel and the bridge process log."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "bridge:compile": "node scripts/build-bridge.mjs",
+    "compile": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p media",
+    "lint": "eslint src --ext ts",
+    "pretest": "npm run compile && npm run bridge:compile",
+    "test": "npm run typecheck && npm run bridge:test && npm run test:sql",
+    "bridge:test": "node scripts/build-bridge.mjs --test",
+    "test:sql": "node --test src/sql/sqlContext.test.ts",
+    "smoke": "node scripts/smoke-test.mjs",
+    "verify": "npm test && npm run bridge:compile && npm run smoke --",
+    "icon": "node scripts/make-icon.mjs",
+    "package": "node scripts/package.mjs",
+    "vscode:prepublish": "npm run typecheck && npm run compile && npm run bridge:compile -- --release"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/vscode": "^1.90.0",
+    "@typescript-eslint/eslint-plugin": "^8.18.0",
+    "@typescript-eslint/parser": "^8.18.0",
+    "@vscode/test-electron": "^2.4.1",
+    "@vscode/vsce": "^4.0.0",
+    "esbuild": "^0.24.2",
+    "eslint": "^9.17.0",
+    "typescript": "^5.7.2"
+  }
+}

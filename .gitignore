@@ -10,6 +10,8 @@ build/
 # Compiled webview bundles (generated from media/**/main.ts)
 media/result/main.js
 media/result/main.js.map
+media/connection/main.js
+media/connection/main.js.map
 media/health/main.js
 media/health/main.js.map
 

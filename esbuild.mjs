@@ -1,13 +1,14 @@
 // Build script for the VS Code extension bundle and its webviews.
 //
-// Two independent bundles are produced:
-//   out/extension.js      - extension host bundle (node, commonjs, `vscode` external)
-//   media/result/main.js  - query result grid webview (browser, iife)
+// Three independent bundles are produced:
+//   out/extension.js         - extension host bundle (node, commonjs, `vscode` external)
+//   media/result/main.js     - query result grid webview (browser, iife)
+//   media/connection/main.js - connection form webview (browser, iife)
 //
 // There is no health dashboard bundle: the health report is emitted as Markdown and rendered into a
 // read-only editor, which gives selection, search and copy for free.
 //
-// `--watch` keeps both rebuilding on change.
+// `--watch` keeps them all rebuilding on change.
 
 import * as esbuild from 'esbuild';
 
@@ -36,6 +37,16 @@ const targets = [
   {
     entryPoints: ['media/result/main.ts'],
     outfile: 'media/result/main.js',
+    bundle: true,
+    format: 'iife',
+    platform: 'browser',
+    target: 'chrome120',
+    sourcemap: !production,
+    minify: production,
+  },
+  {
+    entryPoints: ['media/connection/main.ts'],
+    outfile: 'media/connection/main.js',
     bundle: true,
     format: 'iife',
     platform: 'browser',

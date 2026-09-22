@@ -2,7 +2,8 @@ import * as vscode from 'vscode';
 
 import { Commands, ContextKeys } from '../constants';
 import type { ConnectionProfile, ConnectionProfileDraft } from '../model/ConnectionProfile';
-import { emptyProfile, profileLabel } from '../model/ConnectionProfile';
+import { profileLabel } from '../model/ConnectionProfile';
+import { ConnectionFormPanel, valuesFor } from '../webview/ConnectionFormPanel';
 import type { DatabaseTreeNode } from '../tree/nodeTypes';
 import { describeError, log } from '../util/logger';
 import type { CommandDependencies } from './types';
@@ -47,108 +48,16 @@ function asNode(value: unknown): DatabaseTreeNode | undefined {
 // ---------------------------------------------------------------------------
 
 /**
- * Collects the details of a connection through a sequence of input boxes.
+ * Opens the connection form and returns what the user confirmed.
  *
- * Chosen over a webview form deliberately. It is far less code, it works in the command palette and
- * over a remote connection, and every field benefits from the standard input box behaviours users
- * already know. The unavoidable cost is that driver properties have to be typed as `key=value` pairs
- * rather than edited in a table, which is a reasonable trade for an advanced setting.
+ * A webview form rather than a chain of input boxes, because testing a connection is only meaningful
+ * once the URL, credentials and properties are all present and there is no way to hold all of that at
+ * once across modal prompts. See ConnectionFormPanel for the rest of the reasoning.
  */
-async function promptForProfile(
+async function openConnectionForm(
   dependencies: CommandDependencies,
   existing?: ConnectionProfile,
 ): Promise<{ draft: ConnectionProfileDraft; password?: string } | undefined> {
-  const driverClassName = await chooseDriver(dependencies, existing);
-  if (!driverClassName) {
-    return undefined;
-  }
-
-  const suggestedUrl = dependencies.templates.urlFor(driverClassName);
-  const url = await vscode.window.showInputBox({
-    title: 'JDBC URL',
-    prompt: suggestedUrl
-      ? `For example: ${suggestedUrl}`
-      : 'The full JDBC URL, passed to the driver unchanged',
-    value: existing?.url ?? suggestedUrl ?? '',
-    ignoreFocusOut: true,
-    validateInput: (value) => {
-      const trimmed = value.trim();
-      if (!trimmed) {
-        return 'A JDBC URL is required';
-      }
-      return trimmed.toLowerCase().startsWith('jdbc:') ? undefined : "A JDBC URL starts with 'jdbc:'";
-    },
-  });
-  if (url === undefined) {
-    return undefined;
-  }
-
-  const name = await vscode.window.showInputBox({
-    title: 'Name',
-    prompt: 'A label for this connection',
-    value: existing?.name ?? url.trim(),
-    ignoreFocusOut: true,
-    validateInput: (value) => (value.trim() ? undefined : 'A name is required'),
-  });
-  if (name === undefined) {
-    return undefined;
-  }
-
-  const user = await vscode.window.showInputBox({
-    title: 'User',
-    prompt: 'Leave empty when the URL already carries the credentials',
-    value: existing?.user ?? '',
-    ignoreFocusOut: true,
-  });
-  if (user === undefined) {
-    return undefined;
-  }
-
-  const password = await vscode.window.showInputBox({
-    title: existing ? 'Password (leave empty to keep the saved one)' : 'Password',
-    password: true,
-    ignoreFocusOut: true,
-  });
-  if (password === undefined) {
-    return undefined;
-  }
-
-  const propertyText = await vscode.window.showInputBox({
-    title: 'Driver properties',
-    prompt: 'Extra JDBC properties as key=value, separated by semicolons. Leave empty for none.',
-    value: formatProperties(existing?.properties),
-    ignoreFocusOut: true,
-    validateInput: validateProperties,
-  });
-  if (propertyText === undefined) {
-    return undefined;
-  }
-
-  return {
-    draft: {
-      ...emptyProfile(),
-      id: existing?.id,
-      name: name.trim(),
-      driverClassName,
-      url: url.trim(),
-      user: user.trim() || undefined,
-      properties: parseProperties(propertyText),
-      savePassword: true,
-      poolSize: existing?.poolSize,
-      color: existing?.color,
-    },
-    password: password.length > 0 ? password : undefined,
-  };
-}
-
-async function chooseDriver(
-  dependencies: CommandDependencies,
-  existing?: ConnectionProfile,
-): Promise<string | undefined> {
-  if (existing?.driverClassName) {
-    return existing.driverClassName;
-  }
-
   const drivers = dependencies.drivers.list();
   if (drivers.length === 0) {
     const action = await vscode.window.showWarningMessage(
@@ -165,55 +74,42 @@ async function chooseDriver(
     return undefined;
   }
 
-  // One driver needs no prompt; several do, and the search across description and detail means a user
-  // can find theirs by class name or by the jar it came from.
-  if (drivers.length === 1) {
-    return drivers[0].driverClassName;
-  }
+  const storedPassword = existing ? await dependencies.store.getPassword(existing.id) : undefined;
 
-  const picked = await vscode.window.showQuickPick(
-    drivers.map((driver) => ({
+  const result = await ConnectionFormPanel.show({
+    extensionUri: dependencies.extensionUri,
+    mode: existing ? 'edit' : 'add',
+    values: existing
+      ? valuesFor(existing)
+      : {
+          name: '',
+          driverClassName: drivers[0].driverClassName,
+          url: dependencies.templates.urlFor(drivers[0].driverClassName) ?? '',
+          user: '',
+          password: '',
+          properties: '',
+          poolSize: '',
+        },
+    hasStoredPassword: storedPassword !== undefined,
+    drivers: drivers.map((driver) => ({
+      className: driver.driverClassName,
       label: driver.displayName,
-      description: driver.driverClassName,
       detail: driver.sourceJar,
-      driver,
     })),
-    { title: 'Driver', placeHolder: 'Which JDBC driver?', matchOnDescription: true, matchOnDetail: true },
-  );
-  return picked?.driver.driverClassName;
-}
+    // The bridge's test entry point opens and closes without registering a pool, so an id here has no
+    // effect on a connection that is already live.
+    connect: (draft, password) =>
+      dependencies.connections.test({ ...draft, id: existing?.id ?? 'form' }, password),
+    suggestUrl: (values) => dependencies.templates.urlFor(values.driverClassName),
+  });
 
-function formatProperties(properties: Readonly<Record<string, string>> | undefined): string {
-  return properties
-    ? Object.entries(properties)
-        .map(([key, value]) => `${key}=${value}`)
-        .join(';')
-    : '';
-}
-
-function parseProperties(text: string): Record<string, string> {
-  const result: Record<string, string> = {};
-  for (const entry of text.split(';')) {
-    const trimmed = entry.trim();
-    if (!trimmed) {
-      continue;
-    }
-    const separator = trimmed.indexOf('=');
-    if (separator > 0) {
-      result[trimmed.slice(0, separator).trim()] = trimmed.slice(separator + 1).trim();
-    }
+  if (!result) {
+    return undefined;
   }
-  return result;
-}
-
-function validateProperties(value: string): string | undefined {
-  for (const entry of value.split(';')) {
-    const trimmed = entry.trim();
-    if (trimmed && !trimmed.includes('=')) {
-      return `'${trimmed}' is not key=value`;
-    }
-  }
-  return undefined;
+  return {
+    draft: { ...result.draft, id: existing?.id },
+    password: result.password,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -221,7 +117,7 @@ function validateProperties(value: string): string | undefined {
 // ---------------------------------------------------------------------------
 
 async function addConnection(dependencies: CommandDependencies): Promise<void> {
-  const prompted = await promptForProfile(dependencies);
+  const prompted = await openConnectionForm(dependencies);
   if (!prompted) {
     return;
   }
@@ -248,7 +144,7 @@ async function editConnection(
   if (node?.kind !== 'connection') {
     return;
   }
-  const prompted = await promptForProfile(dependencies, node.profile);
+  const prompted = await openConnectionForm(dependencies, node.profile);
   if (!prompted) {
     return;
   }

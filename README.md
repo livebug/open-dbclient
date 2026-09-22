@@ -122,18 +122,20 @@ com.microsoft.sqlserver:mssql-jdbc:12.8.1.jre11
 
 ### 1. 建一个连接
 
-点活动栏的 **Open DB Client** 图标 → 点 **Connections** 视图标题栏的 `+`,然后按提示依次输入:
+点活动栏的 **Open DB Client** 图标 → 点 **Connections** 视图标题栏的 `+`,打开单页表单:
 
-```
-连接类型    ← 选择内置模板(MySQL / MariaDB / PostgreSQL / openGauss / GaussDB /
-             Apache Hive / Hive 兼容(如 Transwarp Inceptor)/ SQL Server / Oracle /
-             SQLite / Custom)
-连接名称    ← 自己起一个好记的名字
-主机 / 端口 / 数据库
-用户名
-密码        ← 存入 VS Code 加密的 SecretStorage,不落明文
-自定义参数  ← 可留空,格式 key=value;key=value
-```
+| 字段 | 说明 |
+|---|---|
+| **Driver** | 从已加载的驱动里选;驱动 jar 还没放时会有提示入口 |
+| **Name** | 自己起一个好记的名字 |
+| **JDBC URL** | 选中驱动后自动预填前缀,可直接改 |
+| **User** | 留空表示 URL 里已带凭据 |
+| **Password** | 存入 VS Code 加密的 `SecretStorage`,不落明文 |
+| **Properties** | 额外 JDBC 参数,格式 `key=value;key=value` |
+
+**必须先点「Test Connection」成功后「Save」才可用** —— 这是刻意的:存一个连不上的连接,
+问题要到第一次查询时才暴露。测试走桥的独立探测通道(开完就关,不进连接池),所以测一个
+已经连着的连接不会干扰它。编辑已有连接时不需要重测。
 
 模板只做两件事:预填 JDBC URL 前缀和驱动类名。它**不是方言** —— 选 MySQL 模板不等于
 扩展会为 MySQL 走特殊代码路径。
@@ -411,7 +413,7 @@ classpath 上的版本冲突就成了用户的问题。所以:连接池自己写
 | 大结果集落盘、按页取,不跨 IPC | 内存不随结果集增长 | 需要临时文件与 LRU 淘汰 |
 | 补全放在 TypeScript 侧 | 零 IPC 延迟 | 元数据缓存要在两边各维护一份 |
 | 健康面板做成 Markdown 报告而非 webview | 白拿编辑器的选中/搜索/复制,代码量极小 | 不能画图表 |
-| 连接表单用多步快速输入而非 webview 表单 | 命令面板可用、远程会话可用、代码少 | 驱动自定义属性要手敲 `key=value` |
+| 连接表单用 webview 单页表单 | 能先测试再保存,URL/凭据/参数同屏可见 | 比输入框链多一份前端代码,且需要单独打包 |
 
 ---
 
@@ -485,12 +487,12 @@ bridge/src/main/java/com/opendbclient/bridge/
 
 src/
 ├── bridge/     桥进程客户端(帧解析、请求关联、Java 探测、进程生命周期)
-├── model/      连接档案与存储
+├── model/      连接档案与存储、驱动属性文本的解析
 ├── driver/     驱动发现/下载
-├── service/    连接、元数据、导出、历史、模板
-├── sql/        SQL 上下文分析与补全
+├── service/    连接、元数据、导出、历史、模板、变量
+├── sql/        SQL 上下文分析、补全、变量替换、code lens
 ├── tree/       连接树、历史树
-├── webview/    结果网格面板
+├── webview/    结果网格、连接表单、变量面板
 ├── commands/   命令注册
 └── util/       日志、SQL 语句切分、虚拟文档
 ```

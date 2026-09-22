@@ -128,6 +128,28 @@ if (existsSync(join(root, 'CHANGELOG.md'))) {
 // with itself, and the symptom is behaviour that depends on whether the user happened to set the
 // setting explicitly. Compared here rather than left to a comment asking people to keep them in sync.
 const { DEFAULT_VARIABLE_PATTERN } = await import('../src/sql/variables.ts');
+
+// Every webview bundle has to be built and shipped, so a new one that nobody added to the build
+// script or to the ignore list is worth catching here rather than as a blank panel.
+const webviewEntries = [
+  ...(await import('node:fs')).readdirSync(join(root, 'media'), { withFileTypes: true }),
+]
+  .filter((entry) => entry.isDirectory() && existsSync(join(root, 'media', entry.name, 'main.ts')))
+  .map((entry) => `media/${entry.name}/main.js`);
+const esbuildSource = read('esbuild.mjs');
+const gitignore = read('.gitignore');
+const missingFromBuild = webviewEntries.filter((outfile) => !esbuildSource.includes(outfile));
+if (missingFromBuild.length > 0) {
+  fail(`webview bundles are not built: ${missingFromBuild.join(', ')}`);
+} else {
+  check(`${webviewEntries.length} webview bundles are wired into the build`);
+}
+const unignored = webviewEntries.filter((outfile) => !gitignore.includes(outfile));
+if (unignored.length > 0) {
+  fail(`generated bundles are not gitignored: ${unignored.join(', ')}`);
+} else {
+  check('generated webview bundles are gitignored');
+}
 const declaredPattern = properties['open-dbclient.variables.pattern']?.default;
 if (declaredPattern === DEFAULT_VARIABLE_PATTERN) {
   check('the variable pattern default matches the code');

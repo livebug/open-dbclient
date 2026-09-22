@@ -15,7 +15,10 @@ permissions:
   contents: read
 
 env:
-  DRIVER_DIR: ${{ runner.temp }}/jdbc-drivers
+  # A literal path on purpose: the `runner` context is not available to workflow-level `env`, only
+  # to step-level `env`. Using it here makes the whole file fail validation, and an invalid file
+  # produces one failed run for every push instead of a useful error.
+  DRIVER_DIR: /tmp/jdbc-drivers
 
 jobs:
   build:

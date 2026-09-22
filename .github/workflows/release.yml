@@ -12,7 +12,8 @@ permissions:
   contents: write
 
 env:
-  DRIVER_DIR: ${{ runner.temp }}/jdbc-drivers
+  # Must be a literal: the `runner` context is unavailable to workflow-level `env`.
+  DRIVER_DIR: /tmp/jdbc-drivers
 
 jobs:
   release:

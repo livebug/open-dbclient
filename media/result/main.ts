@@ -88,6 +88,14 @@ let detailPanel: HTMLDivElement | undefined;
 let selectedCell: HTMLTableCellElement | undefined;
 let renderScheduled = false;
 
+/** The slice of rows currently in the DOM, used to skip redundant rebuilds on scroll. */
+let renderedWindow:
+  | { first: number; last: number; total: number; columns: number; offset: number }
+  | undefined;
+
+/** Height of the sticky header, re-measured whenever the table content is rebuilt. */
+let headerHeight = 0;
+
 // ---------------------------------------------------------------------------
 // message handling
 // ---------------------------------------------------------------------------
@@ -218,6 +226,9 @@ function renderContent(): void {
   head.replaceChildren();
   body.replaceChildren();
 
+  // The body is now empty, so the remembered window no longer describes what is in the DOM.
+  renderedWindow = undefined;
+
   if (state.mode !== 'result') {
     const placeholder = document.createElement('div');
     placeholder.id = 'placeholder';
@@ -281,7 +292,12 @@ function renderContent(): void {
   }
   head.append(headerRow);
 
-  renderVisibleRows();
+  // Measured once per content rebuild rather than on every scroll: the header is sticky, so the
+  // scroll offset of the first data row is shifted by its height, and reading layout on each scroll
+  // frame would force a style recalculation for no reason.
+  headerHeight = head.getBoundingClientRect().height;
+
+  renderVisibleRows(true);
 }
 
 /**
@@ -289,11 +305,36 @@ function renderContent(): void {
  *
  * The two spacer rows carry the height of the rows above and below the window, which makes the
  * scrollbar represent the whole result while the DOM holds only a screenful.
+ *
+ * The window that was last drawn is remembered, and an unchanged window is left alone. Rebuilding the
+ * body changes the table's height for a frame, which can bounce a scroll event straight back - so the
+ * render fed itself, the grid flickered and the scrollbar appeared to fight the user. Skipping the
+ * redundant work also means a scroll that stays within one row redraws nothing at all.
  */
-function renderVisibleRows(): void {
+function renderVisibleRows(force = false): void {
+  const total = state.rows.length;
+  const visibleCount = Math.ceil(viewport.clientHeight / ROW_HEIGHT) + OVERSCAN * 2;
+  const first =
+    total === 0
+      ? 0
+      : Math.max(0, Math.floor((viewport.scrollTop - headerHeight) / ROW_HEIGHT) - OVERSCAN);
+  const last = Math.min(total, first + visibleCount);
+
+  if (
+    !force &&
+    renderedWindow !== undefined &&
+    renderedWindow.first === first &&
+    renderedWindow.last === last &&
+    renderedWindow.total === total &&
+    renderedWindow.columns === state.columns.length &&
+    renderedWindow.offset === state.offset
+  ) {
+    return;
+  }
+  renderedWindow = { first, last, total, columns: state.columns.length, offset: state.offset };
+
   body.replaceChildren();
 
-  const total = state.rows.length;
   if (total === 0) {
     const row = document.createElement('tr');
     const cell = document.createElement('td');
@@ -305,11 +346,6 @@ function renderVisibleRows(): void {
     body.append(row);
     return;
   }
-
-  const scrollTop = viewport.scrollTop;
-  const visibleCount = Math.ceil(viewport.clientHeight / ROW_HEIGHT) + OVERSCAN * 2;
-  const first = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
-  const last = Math.min(total, first + visibleCount);
 
   body.append(spacerRow(first * ROW_HEIGHT));
 

@@ -148,7 +148,9 @@ com.microsoft.sqlserver:mssql-jdbc:12.8.1.jre11
 | `Ctrl+Enter` / `Cmd+Enter` | 执行选中内容;没有选中则执行光标所在的**单条**语句;都没有则执行整个文件 |
 | `Ctrl+Shift+Enter` / `Cmd+Shift+Enter` | 执行整个文件里的**所有**语句 |
 
-结果出现在右侧的网格面板,支持分页、导出、取消、重跑。
+每条语句上方还会有一个 **Run** 按钮(`query.codeLens`),点哪个跑哪个 —— 不用先把光标移进去。
+
+结果出现在独立面板,默认**上下分屏**(`result.openIn`),支持分页、导出、取消、重跑。
 
 ### 3. 把 SQL 文件绑定到连接
 
@@ -159,6 +161,7 @@ com.microsoft.sqlserver:mssql-jdbc:12.8.1.jre11
 
 ```sql
 -- @connection 生产库只读
+-- @connection: 生产库只读    ← 两种写法都认
 
 SELECT id, name FROM users WHERE created_at > '2026-01-01';
 ```
@@ -186,6 +189,8 @@ INSERT INTO users (|        -- 补全列名
 - 重新连接同名同目标的连接会**复用**连接池,不会泄漏
 - 改密码后会自动重建连接
 - 数据库树按 `目录 → schema → 表/视图 → 列/索引` 展开,单层结构会自动折叠
+- **筛选**:视图标题栏的筛选按钮按名称过滤表、视图、列、索引;生效时视图描述会显示
+  `filter: 关键字`,避免把`过滤后的空列表`误认为`库里没东西`。清除用旁边的按钮
 
 ### SQL 智能补全
 
@@ -267,6 +272,7 @@ Markdown 报告,包含:
 | **查询** | |
 | New Query | 新建 SQL 编辑并绑定连接 |
 | Run Query | 执行选中 / 光标处语句 / 整个文件 |
+| Run This Statement | 执行指定的一条语句(每条 SQL 上方的 Run 按钮用它) |
 | Run All Queries | 执行整个文件所有语句 |
 | Cancel Running Query | 取消正在跑的查询 |
 | Select Top 200 Rows | 从树上直接预览表数据 |
@@ -283,6 +289,7 @@ Markdown 报告,包含:
 | **其它** | |
 | Show JDBC Health | 打开健康报告 |
 | Restart JDBC Bridge | 重启 Java 桥 |
+| Filter Tables and Views / Clear Table Filter | 按名称筛选或清除筛选 |
 | Refresh Metadata Cache / Refresh / Refresh All | 刷新缓存与树 |
 | Query History 相关 | 插入 / 删除 / 清空历史 |
 
@@ -315,7 +322,10 @@ Markdown 报告,包含:
 |---|---|---|---|
 | `connection.poolSize` | number | `1` | 每个连接的池大小 |
 | `query.fetchSize` | number | `200` | JDBC fetch size |
+| `query.maxRows` | number | `100000` | 每次执行的最大取数行数;`0` 表示不限。命中上限会标记为截断 |
+| `query.codeLens` | boolean | `true` | 是否在每条 SQL 上方显示「Run」按钮 |
 | `query.confirmDangerous` | boolean | `true` | 破坏性语句执行前确认 |
+| `result.openIn` | string | `"below"` | 结果面板位置:`below`(上下分屏)或 `beside`(左右分屏) |
 | `result.maxCacheBytes` | number | `536870912` | 磁盘结果缓存上限(512 MiB),超出按 LRU 淘汰 |
 
 ### 智能补全
@@ -420,7 +430,7 @@ npm run icon            # 重新生成扩展图标   → media/icon/icon.png
 ### 测试
 
 ```bash
-npm test        # 类型检查 + 文档与清单一致性 + 30 项 Java 测试 + 24 项 SQL 测试(无需数据库)
+npm test        # 类型检查 + 文档与清单一致性 + 30 项 Java 测试 + 40 项 TS 单测(无需数据库)
 npm run verify  # 上面全部 + 构建桥 + 冒烟检查
 ```
 

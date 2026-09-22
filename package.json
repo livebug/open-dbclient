@@ -145,6 +145,11 @@
         "category": "DB Client"
       },
       {
+        "command": "open-dbclient.runStatement",
+        "title": "Run This Statement",
+        "category": "DB Client"
+      },
+      {
         "command": "open-dbclient.runQueryFromTree",
         "title": "Select Top 200 Rows",
         "category": "DB Client",
@@ -233,6 +238,18 @@
         "icon": "$(sync)"
       },
       {
+        "command": "open-dbclient.filterTree",
+        "title": "Filter Tables and Views",
+        "category": "DB Client",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "open-dbclient.clearFilter",
+        "title": "Clear Table Filter",
+        "category": "DB Client",
+        "icon": "$(clear-all)"
+      },
+      {
         "command": "open-dbclient.insertHistoryEntry",
         "title": "Insert Query Into Editor",
         "category": "DB Client"
@@ -255,13 +272,13 @@
         "command": "open-dbclient.runQuery",
         "key": "ctrl+enter",
         "mac": "cmd+enter",
-        "when": "editorLangId == sql && open-dbclient.hasActiveConnection"
+        "when": "open-dbclient.sqlFile && open-dbclient.hasActiveConnection"
       },
       {
         "command": "open-dbclient.runAllQueries",
         "key": "ctrl+shift+enter",
         "mac": "cmd+shift+enter",
-        "when": "editorLangId == sql && open-dbclient.hasActiveConnection"
+        "when": "open-dbclient.sqlFile && open-dbclient.hasActiveConnection"
       }
     ],
     "menus": {
@@ -277,9 +294,19 @@
           "group": "navigation@2"
         },
         {
-          "command": "open-dbclient.showHealth",
+          "command": "open-dbclient.filterTree",
           "when": "view == open-dbclient.connections",
           "group": "navigation@3"
+        },
+        {
+          "command": "open-dbclient.clearFilter",
+          "when": "view == open-dbclient.connections",
+          "group": "navigation@4"
+        },
+        {
+          "command": "open-dbclient.showHealth",
+          "when": "view == open-dbclient.connections",
+          "group": "navigation@5"
         },
         {
           "command": "open-dbclient.openDriverFolder",
@@ -380,29 +407,29 @@
         },
         {
           "command": "open-dbclient.insertHistoryEntry",
-          "when": "view == open-dbclient.history",
+          "when": "view == open-dbclient.history && viewItem == history",
           "group": "inline@1"
         },
         {
           "command": "open-dbclient.deleteHistoryEntry",
-          "when": "view == open-dbclient.history",
+          "when": "view == open-dbclient.history && viewItem == history",
           "group": "inline@2"
         }
       ],
       "editor/context": [
         {
           "command": "open-dbclient.runQuery",
-          "when": "editorLangId == sql",
+          "when": "open-dbclient.sqlFile",
           "group": "open-dbclient@1"
         },
         {
           "command": "open-dbclient.runAllQueries",
-          "when": "editorLangId == sql",
+          "when": "open-dbclient.sqlFile",
           "group": "open-dbclient@2"
         },
         {
           "command": "open-dbclient.cancelQuery",
-          "when": "editorLangId == sql",
+          "when": "open-dbclient.sqlFile",
           "group": "open-dbclient@3"
         }
       ],
@@ -484,6 +511,29 @@
           "type": "boolean",
           "default": true,
           "markdownDescription": "Ask for confirmation before running statements that look destructive (`DROP`, `TRUNCATE`, `DELETE`/`UPDATE` without a `WHERE` clause)."
+        },
+        "open-dbclient.query.maxRows": {
+          "type": "number",
+          "default": 100000,
+          "minimum": 0,
+          "markdownDescription": "Row ceiling applied to every statement run from an editor. A statement that hits the ceiling is reported as truncated rather than silently cut short. Set to `0` for no ceiling. This does not affect exports, which are unbounded by design."
+        },
+        "open-dbclient.query.codeLens": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Show a Run action above every statement in a SQL file."
+        },
+        "open-dbclient.result.openIn": {          "type": "string",
+          "enum": [
+            "below",
+            "beside"
+          ],
+          "enumDescriptions": [
+            "Split the editor downwards, so the result sits under the SQL (up/down).",
+            "Split the editor to the right, so the result sits next to the SQL (left/right)."
+          ],
+          "default": "below",
+          "markdownDescription": "Where a result panel opens."
         },
         "open-dbclient.result.maxCacheBytes": {
           "type": "number",
@@ -577,9 +627,9 @@
     "lint": "eslint src --ext ts",
     "pretest": "npm run compile && npm run bridge:compile",
     "docs": "node scripts/check-docs.mjs",
-    "test": "npm run typecheck && npm run docs && npm run bridge:test && npm run test:sql",
+    "test": "npm run typecheck && npm run docs && npm run bridge:test && npm run test:unit",
     "bridge:test": "node scripts/build-bridge.mjs --test",
-    "test:sql": "node --test src/sql/sqlContext.test.ts",
+    "test:unit": "node --test \"src/**/*.test.ts\"",
     "smoke": "node scripts/smoke-test.mjs",
     "verify": "npm test && npm run bridge:compile && npm run smoke --",
     "icon": "node scripts/make-icon.mjs",

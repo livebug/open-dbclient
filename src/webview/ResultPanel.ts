@@ -75,25 +75,26 @@ export class ResultPanel implements vscode.Disposable {
 
   private runningQueryId: string | undefined;
 
+  /**
+   * Re-runs whatever the panel is currently showing.
+   *
+   * Replaced every time the panel is reused. Holding on to the handler from the panel's first use
+   * meant "Run again" repeated that first statement forever, which for a new query file was the
+   * `SELECT 1` template rather than the query on screen.
+   */
+  private onRerun: (() => Promise<void>) | undefined;
+
   /** Opens or reveals the panel for a key. */
-  static show(options: ResultPanelOptions): ResultPanel {
+  static async show(options: ResultPanelOptions): Promise<ResultPanel> {
     const existing = ResultPanel.registry.get(options.key);
     if (existing && !existing.disposed) {
+      existing.onRerun = options.onRerun;
+      existing.panel.title = options.title;
       existing.panel.reveal(undefined, false);
       return existing;
     }
 
-    const panel = vscode.window.createWebviewPanel(
-      'open-dbclient.result',
-      options.title,
-      vscode.ViewColumn.Beside,
-      {
-        enableScripts: true,
-        // The grid is regenerated on every keystroke of a scroll, so it must survive losing focus.
-        retainContextWhenHidden: true,
-        localResourceRoots: [vscode.Uri.joinPath(options.extensionUri, 'media')],
-      },
-    );
+    const panel = await createPanel(options);
 
     const instance = new ResultPanel(panel, options);
     ResultPanel.registry.set(options.key, instance);
@@ -113,6 +114,7 @@ export class ResultPanel implements vscode.Disposable {
     private readonly options: ResultPanelOptions,
   ) {
     this.pageSize = vscode.workspace.getConfiguration().get<number>(Config.fetchSize, DEFAULT_PAGE_SIZE);
+    this.onRerun = options.onRerun;
 
     this.panel.webview.html = renderHtml(this.panel.webview, options.extensionUri);
     this.panel.iconPath = new vscode.ThemeIcon('table');
@@ -247,8 +249,8 @@ export class ResultPanel implements vscode.Disposable {
         break;
 
       case 'rerun':
-        if (this.options.onRerun) {
-          await this.options.onRerun();
+        if (this.onRerun) {
+          await this.onRerun();
         }
         break;
 
@@ -318,7 +320,9 @@ export class ResultPanel implements vscode.Disposable {
     await this.options.exportService.exportResult({
       connectionId,
       queryId: this.queryId,
-      sql: this.queryId ? undefined : this.sourceSql,
+      // Always supplied as well, so that an evicted result can be re-read by re-running the statement
+      // rather than reported as a failure the user can do nothing about.
+      sql: this.sourceSql,
       suggestedName: this.suggestedFileName(),
     });
   }
@@ -375,6 +379,52 @@ export class ResultPanel implements vscode.Disposable {
     }
     this.disposables.length = 0;
   }
+}
+
+// ---------------------------------------------------------------------------
+// placement
+// ---------------------------------------------------------------------------
+
+/**
+ * Creates the panel where the user asked results to appear.
+ *
+ * `ViewColumn` has no "below": `Beside` always opens a group to the right. To split downwards the
+ * workbench is asked for a group below first and the panel then goes into whichever column is active.
+ * If that command is unavailable the panel still opens, just beside, because failing to show a result
+ * is much worse than showing it in the wrong direction.
+ */
+async function createPanel(options: ResultPanelOptions): Promise<vscode.WebviewPanel> {
+  const placement = vscode.workspace
+    .getConfiguration()
+    .get<string>(Config.resultOpenIn, 'below');
+
+  const panelOptions: vscode.WebviewPanelOptions & vscode.WebviewOptions = {
+    enableScripts: true,
+    // The webview is repainted as the user scrolls, so it must not be torn down when it loses focus.
+    retainContextWhenHidden: true,
+    localResourceRoots: [vscode.Uri.joinPath(options.extensionUri, 'media')],
+  };
+
+  if (placement === 'below') {
+    try {
+      await vscode.commands.executeCommand('workbench.action.newGroupBelow');
+      return vscode.window.createWebviewPanel(
+        'open-dbclient.result',
+        options.title,
+        vscode.ViewColumn.Active,
+        panelOptions,
+      );
+    } catch (error) {
+      log.debug(`Could not split downwards, opening beside instead: ${String(error)}`);
+    }
+  }
+
+  return vscode.window.createWebviewPanel(
+    'open-dbclient.result',
+    options.title,
+    vscode.ViewColumn.Beside,
+    panelOptions,
+  );
 }
 
 // ---------------------------------------------------------------------------

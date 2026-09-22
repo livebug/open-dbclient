@@ -40,6 +40,17 @@ export class DatabaseTreeProvider
   private readonly cache = new Map<string, DatabaseTreeNode[]>();
   private readonly subscriptions: vscode.Disposable[] = [];
 
+  /**
+   * Case-insensitive substring that table, view, column and index names must contain.
+   *
+   * The editor has no built-in tree filtering, so the provider does it and reports the active filter
+   * in the view's description. Without that, a filtered tree is indistinguishable from a database
+   * that happens to have few objects in it.
+   */
+  private nameFilter = '';
+
+  private view: vscode.TreeView<DatabaseTreeNode> | undefined;
+
   readonly onDidChangeTreeData = this.emitter.event;
 
   constructor(
@@ -56,6 +67,40 @@ export class DatabaseTreeProvider
         this.emitter.fire(undefined);
       }),
     );
+  }
+
+  /** Gives the provider the view, so it can show the active filter where the user is looking. */
+  attachView(view: vscode.TreeView<DatabaseTreeNode>): void {
+    this.view = view;
+    this.updateViewDescription();
+  }
+
+  get activeFilter(): string {
+    return this.nameFilter;
+  }
+
+  /** Sets or clears the name filter. Passing an empty string clears it. */
+  setFilter(text: string): void {
+    const next = text.trim();
+    if (next === this.nameFilter) {
+      return;
+    }
+    this.nameFilter = next;
+    // Every cached listing was computed under the previous filter.
+    this.cache.clear();
+    this.updateViewDescription();
+    this.emitter.fire(undefined);
+  }
+
+  private updateViewDescription(): void {
+    if (this.view) {
+      this.view.description = this.nameFilter ? `filter: ${this.nameFilter}` : undefined;
+    }
+  }
+
+  /** Whether a name passes the filter. An empty filter matches everything. */
+  private matches(name: string): boolean {
+    return this.nameFilter === '' || name.toLowerCase().includes(this.nameFilter.toLowerCase());
   }
 
   getTreeItem(node: DatabaseTreeNode): vscode.TreeItem {
@@ -223,7 +268,7 @@ export class DatabaseTreeProvider
 
     const wantsViews = node.folder === 'views';
     return tables
-      .filter((table) => isView(table.type) === wantsViews)
+      .filter((table) => isView(table.type) === wantsViews && this.matches(table.name))
       .map((table) => ({
         kind: (isView(table.type) ? 'view' : 'table') as 'view' | 'table',
         connectionId: node.connectionId,
@@ -254,11 +299,13 @@ export class DatabaseTreeProvider
         `Present: ${columns.map((column) => column.name).join(', ')}`,
     );
 
-    const children: DatabaseTreeNode[] = columns.map((column) => ({
-      kind: 'column' as const,
-      connectionId: node.connectionId,
-      column,
-    }));
+    const children: DatabaseTreeNode[] = columns
+      .filter((column) => this.matches(column.name))
+      .map((column) => ({
+        kind: 'column' as const,
+        connectionId: node.connectionId,
+        column,
+      }));
 
     // Indexes only make sense for tables; a view has none to list.
     if (node.kind === 'table') {
@@ -285,11 +332,13 @@ export class DatabaseTreeProvider
       schema: node.schema,
       table: node.table,
     });
-    return indexes.map((index) => ({
-      kind: 'index' as const,
-      connectionId: node.connectionId,
-      index,
-    }));
+    return indexes
+      .filter((index) => this.matches(index.name ?? ''))
+      .map((index) => ({
+        kind: 'index' as const,
+        connectionId: node.connectionId,
+        index,
+      }));
   }
 
   // ------------------------------------------------------------------

@@ -22,6 +22,8 @@ export function registerConnectionCommands(dependencies: CommandDependencies): v
     register(Commands.disconnect, (node) => disconnect(dependencies, asNode(node))),
     register(Commands.selectConnection, () => selectConnectionForActiveEditor(dependencies)),
     register(Commands.copyName, (node) => copyName(asNode(node))),
+    register(Commands.filterTree, () => filterTree(dependencies)),
+    register(Commands.clearFilter, () => dependencies.tree.setFilter('')),
   ];
 }
 
@@ -419,6 +421,26 @@ async function copyName(node: DatabaseTreeNode | undefined): Promise<void> {
     return;
   }
   await vscode.env.clipboard.writeText(labelOf(node));
+}
+
+/**
+ * Asks for a name filter and applies it.
+ *
+ * Pre-filled with the active filter so the command doubles as "edit the filter" instead of forcing a
+ * clear-then-type cycle whenever a character was wrong. Submitting an empty box clears it, which
+ * keeps the two commands consistent.
+ */
+async function filterTree(dependencies: CommandDependencies): Promise<void> {
+  const value = await vscode.window.showInputBox({
+    title: 'Filter tables, views and columns',
+    prompt: 'Show only names containing this text. Leave empty to clear.',
+    value: dependencies.tree.activeFilter,
+    placeHolder: 'e.g. order',
+  });
+  if (value === undefined) {
+    return;
+  }
+  dependencies.tree.setFilter(value);
 }
 
 function labelOf(node: DatabaseTreeNode): string {

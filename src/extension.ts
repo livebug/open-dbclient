@@ -16,6 +16,7 @@ import { HistoryTreeProvider } from './tree/HistoryTreeProvider';
 import { HealthMonitor } from './health/HealthMonitor';
 import { MetadataCache } from './sql/metadataCache';
 import { SqlCompletionProvider } from './sql/completionProvider';
+import { SqlCodeLensProvider } from './sql/codeLensProvider';
 import { VirtualDocumentProvider } from './util/VirtualDocuments';
 import { JavaNotFoundError } from './bridge/JavaLocator';
 import { registerConnectionCommands, setDriverContext } from './commands/connectionCommands';
@@ -55,6 +56,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const health = new HealthMonitor(bridge, virtualDocuments);
   const metadataCache = new MetadataCache(metadata, connections);
   const completion = new SqlCompletionProvider(metadataCache, binding, connections);
+  const codeLens = new SqlCodeLensProvider();
 
   // Completion is instant once the table list is cached, so it is fetched in the background as soon
   // as a connection comes up. On a database with thousands of tables that prefetch is slow enough to
@@ -88,6 +90,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     virtualDocuments,
   };
 
+  // Created as a TreeView rather than through registerTreeDataProvider so the provider can put the
+  // active name filter in the view's description. Without it a filtered tree is indistinguishable
+  // from a database that simply has few objects.
+  const connectionsView = vscode.window.createTreeView(VIEW_CONNECTIONS, {
+    treeDataProvider: tree,
+    showCollapseAll: true,
+  });
+  tree.attachView(connectionsView);
+
   context.subscriptions.push(
     bridge,
     store,
@@ -99,19 +110,22 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     binding,
     health,
     completion,
+    codeLens,
     onConnectionStateChanged,
     virtualDocuments,
     virtualDocuments.register(),
 
-    vscode.window.registerTreeDataProvider(VIEW_CONNECTIONS, tree),
-    vscode.window.registerTreeDataProvider(VIEW_HISTORY, historyTree),
+    connectionsView,
 
-    vscode.commands.registerCommand(Commands.listDrivers, () => listDrivers(dependencies)),
+    vscode.window.registerTreeDataProvider(VIEW_HISTORY, historyTree),    vscode.commands.registerCommand(Commands.listDrivers, () => listDrivers(dependencies)),
     vscode.commands.registerCommand(Commands.restartBridge, () => restartBridge(dependencies)),
     vscode.commands.registerCommand(Commands.showHealth, () => health.showReport()),
 
     ...registerConnectionCommands(dependencies),
     ...registerQueryCommands(dependencies),
+
+    // Registered once for the SQL language; the provider itself honours the enable setting.
+    vscode.languages.registerCodeLensProvider({ language: 'sql' }, codeLens),
   );
 
   // Drivers are loaded eagerly so the connection view can show its empty state correctly, and so a
@@ -128,6 +142,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
       if (event.affectsConfiguration(Config.resultMaxCacheBytes)) {
         void applyBridgeConfiguration(dependencies);
+      }
+      if (event.affectsConfiguration(Config.codeLens)) {
+        codeLens.refresh();
       }
     }),
 

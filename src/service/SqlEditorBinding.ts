@@ -1,9 +1,20 @@
 import * as vscode from 'vscode';
 
-import { CONNECTION_DIRECTIVE } from '../constants';
+import { CONNECTION_DIRECTIVE, ContextKeys, connectionDirective } from '../constants';
 import { profileLabel, type ConnectionProfile } from '../model/ConnectionProfile';
 import type { ConnectionStore } from '../model/ConnectionStore';
 import { log } from '../util/logger';
+
+/**
+ * Whether a document should be treated as a SQL script.
+ *
+ * Language alone is not enough: `New Query` opens an untitled document, and saving it under a name
+ * the editor does not map to SQL silently changes its language, which used to take the run command
+ * and the completion provider with it. The directive is the durable signal.
+ */
+export function isSqlDocument(document: vscode.TextDocument): boolean {
+  return document.languageId === 'sql' || CONNECTION_DIRECTIVE.test(document.getText());
+}
 
 /**
  * Attaches SQL files to connections.
@@ -28,6 +39,7 @@ export class SqlEditorBinding implements vscode.Disposable {
           this.updateStatusBar();
         }
       }),
+      vscode.workspace.onDidSaveTextDocument((document) => void this.keepSqlLanguage(document)),
       this.store.onDidChange(() => this.updateStatusBar()),
       this.statusBar,
     );
@@ -35,9 +47,32 @@ export class SqlEditorBinding implements vscode.Disposable {
     this.updateStatusBar();
   }
 
+  /**
+   * Puts the language back to SQL after a save that changed it.
+   *
+   * Only when it landed on plain text: anything else was a deliberate choice of the user's, and
+   * overriding it would be rude. Without this the file keeps opening as plain text, so syntax
+   * colouring and completion stay off for a file that is plainly a SQL script.
+   */
+  private async keepSqlLanguage(document: vscode.TextDocument): Promise<void> {
+    if (document.languageId !== 'plaintext') {
+      return;
+    }
+    if (!CONNECTION_DIRECTIVE.test(document.getText())) {
+      return;
+    }
+
+    try {
+      await vscode.languages.setTextDocumentLanguage(document, 'sql');
+      log.debug(`Restored the SQL language for ${document.uri.fsPath || document.uri.path}`);
+    } catch (error) {
+      log.debug(`Could not restore the SQL language: ${String(error)}`);
+    }
+  }
+
   /** The profile a document is bound to, or undefined when it has no usable directive. */
   resolve(document: vscode.TextDocument): ConnectionProfile | undefined {
-    if (document.languageId !== 'sql') {
+    if (!isSqlDocument(document)) {
       return undefined;
     }
     const match = CONNECTION_DIRECTIVE.exec(document.getText());
@@ -54,7 +89,7 @@ export class SqlEditorBinding implements vscode.Disposable {
 
   /** Writes the directive, replacing an existing one in place. */
   async bind(document: vscode.TextDocument, profile: ConnectionProfile): Promise<void> {
-    const directive = `-- @connection: ${profile.name}`;
+    const directive = connectionDirective(profile.name);
     const text = document.getText();
     const match = CONNECTION_DIRECTIVE.exec(text);
     const edit = new vscode.WorkspaceEdit();
@@ -81,10 +116,13 @@ export class SqlEditorBinding implements vscode.Disposable {
    * the many windows where no SQL is open at all.
    */
   updateStatusBar(editor: vscode.TextEditor | undefined = vscode.window.activeTextEditor): void {
-    if (!editor || editor.document.languageId !== 'sql') {
+    if (!editor || !isSqlDocument(editor.document)) {
+      void vscode.commands.executeCommand('setContext', ContextKeys.sqlFile, false);
       this.statusBar.hide();
       return;
     }
+
+    void vscode.commands.executeCommand('setContext', ContextKeys.sqlFile, true);
 
     const profile = this.resolve(editor.document);
     if (profile) {

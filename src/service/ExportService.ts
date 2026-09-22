@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 
 import { Config } from '../constants';
-import { Methods } from '../bridge/protocol';
+import { ErrorCodes, Methods } from '../bridge/protocol';
 import type { JdbcBridge } from '../bridge/JdbcBridge';
 import { describeError, log } from '../util/logger';
 
@@ -101,8 +101,10 @@ export class ExportService {
       maxRowsPerSheet: configuration.get<number>(Config.excelMaxRowsPerSheet, 1_048_576),
     };
 
-    try {
-      const result = await vscode.window.withProgress(
+    // Pulled out so the same request can be issued twice: once against the result the user is looking
+    // at, and once against a fresh execution of the statement when that result no longer exists.
+    const runExport = (from: { queryId?: string; sql?: string }) =>
+      vscode.window.withProgress(
         {
           location: vscode.ProgressLocation.Notification,
           title: `Exporting to ${target.fsPath.split(/[\\/]/).pop()}`,
@@ -113,8 +115,8 @@ export class ExportService {
             Methods.queryExport,
             {
               connectionId: source.connectionId,
-              queryId: source.queryId,
-              sql: source.sql,
+              queryId: from.queryId,
+              sql: from.sql,
               format: choice.format,
               filePath: target.fsPath,
               tableName,
@@ -124,6 +126,24 @@ export class ExportService {
             { timeoutMs: 0 },
           ),
       );
+
+    try {
+      let result: ExportResult;
+      try {
+        result = await runExport(
+          source.queryId ? { queryId: source.queryId } : { sql: source.sql },
+        );
+      } catch (error) {
+        // The bridge drops a cached result once its connection closes or the disk budget is reached,
+        // while the result panel can easily outlive that. Re-running the statement is slower but it
+        // is what the user asked for, and it is far better than a dead end.
+        const missing = (error as { code?: string } | undefined)?.code === ErrorCodes.queryNotFound;
+        if (!missing || !source.queryId || !source.sql) {
+          throw error;
+        }
+        log.info(`Result ${source.queryId} is no longer cached; re-running the statement to export it`);
+        result = await runExport({ sql: source.sql });
+      }
 
       log.info(
         `Exported ${result.rows} row(s) to ${result.file} (${formatBytes(result.bytes)} in ${result.elapsedMillis} ms)`,

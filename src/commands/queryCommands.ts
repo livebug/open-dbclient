@@ -1,11 +1,13 @@
 import * as vscode from 'vscode';
 
-import { Commands, Config } from '../constants';
+import { Commands, Config, connectionDirective } from '../constants';
 import { Methods } from '../bridge/protocol';
 import type { QueryExecuteResult } from '../bridge/protocol';
 import { profileLabel, type ConnectionProfile } from '../model/ConnectionProfile';
 import type { DatabaseTreeNode, TableNode } from '../tree/nodeTypes';
 import { qualifiedName } from '../tree/nodeTypes';
+import type { HistoryNode } from '../tree/HistoryTreeProvider';
+import { isSqlDocument } from '../service/SqlEditorBinding';
 import { ResultPanel } from '../webview/ResultPanel';
 import {
   isDestructive,
@@ -23,6 +25,9 @@ export function registerQueryCommands(dependencies: CommandDependencies): vscode
   return [
     register(Commands.openQuery, (node) => openQuery(dependencies, node)),
     register(Commands.runQuery, () => runFromEditor(dependencies, false)),
+    register(Commands.runStatement, (range) =>
+      runSingleStatement(dependencies, range as vscode.Range | undefined),
+    ),
     register(Commands.runAllQueries, () => runFromEditor(dependencies, true)),
     register(Commands.runQueryFromTree, (node) => runTablePreview(dependencies, asNode(node))),
     register(Commands.cancelQuery, () => cancelCurrent(dependencies)),
@@ -38,8 +43,10 @@ export function registerQueryCommands(dependencies: CommandDependencies): vscode
       dependencies.tree.refresh();
       void vscode.window.showInformationMessage('Schema information refreshed.');
     }),
-    register(Commands.insertHistoryEntry, (entry) => insertHistory(asNode(entry))),
-    register(Commands.deleteHistoryEntry, (entry) => deleteHistory(dependencies, asNode(entry))),
+    register(Commands.insertHistoryEntry, (node) => insertHistory(asHistoryNode(node))),
+    register(Commands.deleteHistoryEntry, (node) =>
+      deleteHistory(dependencies, asHistoryNode(node)),
+    ),
     register(Commands.clearHistory, () => clearHistory(dependencies)),
   ];
 }
@@ -47,6 +54,18 @@ export function registerQueryCommands(dependencies: CommandDependencies): vscode
 function asNode(value: unknown): DatabaseTreeNode | undefined {
   return typeof value === 'object' && value !== null && 'kind' in value
     ? (value as DatabaseTreeNode)
+    : undefined;
+}
+
+/**
+ * Narrowing for query-history items.
+ *
+ * These are a different shape from tree nodes and carry no `kind`, so reusing `asNode` for them
+ * silently produced `undefined` and the commands returned without doing anything at all.
+ */
+function asHistoryNode(value: unknown): HistoryNode | undefined {
+  return typeof value === 'object' && value !== null && 'entry' in value
+    ? (value as HistoryNode)
     : undefined;
 }
 
@@ -84,7 +103,7 @@ async function openQuery(
 
   const document = await vscode.workspace.openTextDocument({
     language: 'sql',
-    content: `-- @connection: ${profile.name}\n\nSELECT 1;\n`,
+    content: `${connectionDirective(profile.name)}\n\nSELECT 1;\n`,
   });
   await vscode.window.showTextDocument(document);
 }
@@ -95,7 +114,7 @@ async function runFromEditor(
   wholeScript: boolean,
 ): Promise<void> {
   const editor = vscode.window.activeTextEditor;
-  if (!editor || editor.document.languageId !== 'sql') {
+  if (!editor || !isSqlDocument(editor.document)) {
     void vscode.window.showInformationMessage('Open a SQL file to run a query.');
     return;
   }
@@ -153,14 +172,45 @@ async function runFromEditor(
   await execute(dependencies, editor, profile, sql);
 }
 
-/** Runs a statement and routes the outcome into the result panel. */
-async function execute(
+/**
+ * Runs one statement identified by an explicit range.
+ *
+ * Used by the code lens above each statement. The range is carried by the lens rather than derived
+ * from the cursor, because between drawing the lens and clicking it the user may have moved the
+ * cursor elsewhere, and running a statement other than the one clicked would be indefensible.
+ */
+async function runSingleStatement(
+  dependencies: CommandDependencies,
+  range: vscode.Range | undefined,
+): Promise<void> {
+  const editor = vscode.window.activeTextEditor;
+  if (!editor || !isSqlDocument(editor.document) || !range) {
+    return;
+  }
+
+  const profile = await resolveProfile(dependencies, editor.document);
+  if (!profile) {
+    return;
+  }
+  await ensureConnected(dependencies, profile);
+
+  const sql = editor.document.getText(range);
+  if (!sql.trim()) {
+    return;
+  }
+  if (!(await confirmIfDestructive(sql))) {
+    return;
+  }
+  await execute(dependencies, editor, profile, sql);
+}
+
+/** Runs a statement and routes the outcome into the result panel. */async function execute(
   dependencies: CommandDependencies,
   editor: vscode.TextEditor,
   profile: ConnectionProfile,
   sql: string,
 ): Promise<void> {
-  const panel = ResultPanel.show({
+  const panel = await ResultPanel.show({
     key: `${profile.id}:${editor.document.uri.toString()}`,
     title: `Result - ${profileLabel(profile)}`,
     extensionUri: dependencies.extensionUri,
@@ -184,6 +234,9 @@ async function execute(
         // Supplied by the caller so that cancellation has something to name while the statement is
         // still executing. The bridge only generates an identifier when none is provided.
         queryId,
+        // How much of a result is materialised. Exports deliberately ignore this and stream the whole
+        // table, so the ceiling only bounds what the grid holds.
+        maxRows: vscode.workspace.getConfiguration().get<number>(Config.maxRows, 100_000),
         pageSize: vscode.workspace.getConfiguration().get<number>(Config.fetchSize, 200),
         fetchSize: vscode.workspace.getConfiguration().get<number>(Config.fetchSize, 200),
       },
@@ -253,7 +306,7 @@ async function runTablePreview(
   const sql = `SELECT * FROM ${parts.map((part) => quoteIdentifier(quote, part)).join('.')}`;
 
   const limit = vscode.workspace.getConfiguration().get<number>(Config.fetchSize, 200);
-  const panel = ResultPanel.show({
+  const panel = await ResultPanel.show({
     key: `${profile.id}:table:${qualifiedName(table.catalog, table.schema, table.table.name)}`,
     title: `${table.table.name}`,
     extensionUri: dependencies.extensionUri,
@@ -314,7 +367,7 @@ function nextQueryId(): string {
 
 async function exportFromEditor(dependencies: CommandDependencies): Promise<void> {
   const editor = vscode.window.activeTextEditor;
-  if (!editor || editor.document.languageId !== 'sql') {
+  if (!editor || !isSqlDocument(editor.document)) {
     void vscode.window.showInformationMessage('Open a SQL file to export a query.');
     return;
   }
@@ -488,29 +541,42 @@ async function showDdl(
 // history
 // ---------------------------------------------------------------------------
 
-async function insertHistory(node: DatabaseTreeNode | undefined): Promise<void> {
-  const entry = (node as unknown as { entry?: { sql: string } } | undefined)?.entry;
-  if (!entry) {
+async function insertHistory(node: HistoryNode | undefined): Promise<void> {
+  if (!node) {
+    // Reachable only if the menu contribution and the tree element disagree; say so rather than
+    // returning in silence, which is how this command appeared to be broken rather than unhandled.
+    log.debug('Insert-from-history was invoked without a history item');
     return;
   }
+  const { sql } = node.entry;
 
   const editor = vscode.window.activeTextEditor;
-  if (editor && editor.document.languageId === 'sql') {
-    await editor.edit((builder) => builder.insert(editor.selection.active, entry.sql));
+  if (editor && isSqlDocument(editor.document)) {
+    // Replace a selection when there is one: the user pointed at something, so appending next to it
+    // would leave them with the old text still in the editor.
+    await editor.edit((builder) => {
+      if (editor.selection.isEmpty) {
+        builder.insert(editor.selection.active, sql);
+      } else {
+        builder.replace(editor.selection, sql);
+      }
+    });
     return;
   }
 
-  const document = await vscode.workspace.openTextDocument({ language: 'sql', content: `${entry.sql}\n` });
+  const document = await vscode.workspace.openTextDocument({
+    language: 'sql',
+    content: `${sql}\n`,
+  });
   await vscode.window.showTextDocument(document);
 }
 
 async function deleteHistory(
   dependencies: CommandDependencies,
-  node: DatabaseTreeNode | undefined,
+  node: HistoryNode | undefined,
 ): Promise<void> {
-  const id = (node as unknown as { entry?: { id: string } } | undefined)?.entry?.id;
-  if (id) {
-    await dependencies.history.remove(id);
+  if (node) {
+    await dependencies.history.remove(node.entry.id);
   }
 }
 

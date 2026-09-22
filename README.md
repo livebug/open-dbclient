@@ -81,7 +81,7 @@ code --install-extension open-dbclient-0.1.0.vsix
 
 ### 方式一:从 Maven Central 下载(最省事)
 
-`Ctrl+Shift+P` → **Open DB Client: Download Driver from Maven Central...**,然后按
+`Ctrl+Shift+P` → **DB Client: Download Driver from Maven Central...**,然后按
 `groupId:artifactId:version` 输入坐标,例如:
 
 ```
@@ -93,12 +93,12 @@ com.microsoft.sqlserver:mssql-jdbc:12.8.1.jre11
 
 ### 方式二:添加本地 jar
 
-`Ctrl+Shift+P` → **Open DB Client: Add Driver Jar...**,选中的 jar 会被复制到扩展的驱动目录。
+`Ctrl+Shift+P` → **DB Client: Add Driver Jar...**,选中的 jar 会被复制到扩展的驱动目录。
 
 ### 方式三:直接丢进驱动目录
 
-`Ctrl+Shift+P` → **Open DB Client: Open Driver Folder**,把 jar 拷进去,然后
-**Open DB Client: Restart JDBC Bridge**(或重载窗口)。
+`Ctrl+Shift+P` → **DB Client: Open Driver Folder**,把 jar 拷进去,然后
+**DB Client: Restart JDBC Bridge**(或重载窗口)。
 
 ### 方式四:用设置指向已有目录
 
@@ -114,7 +114,7 @@ com.microsoft.sqlserver:mssql-jdbc:12.8.1.jre11
 }
 ```
 
-加载了哪些驱动可以用 **Open DB Client: List Loaded Drivers** 查看。
+加载了哪些驱动可以用 **DB Client: List Loaded Drivers** 查看。
 
 ---
 
@@ -125,8 +125,9 @@ com.microsoft.sqlserver:mssql-jdbc:12.8.1.jre11
 点活动栏的 **Open DB Client** 图标 → 点 **Connections** 视图标题栏的 `+`,然后按提示依次输入:
 
 ```
-连接类型    ← 选择内置模板(MySQL / PostgreSQL / openGauss / Oracle / SQL Server /
-              ClickHouse / Hive / SQLite / Transwarp / Custom)
+连接类型    ← 选择内置模板(MySQL / MariaDB / PostgreSQL / openGauss / GaussDB /
+             Apache Hive / Hive 兼容(如 Transwarp Inceptor)/ SQL Server / Oracle /
+             SQLite / Custom)
 连接名称    ← 自己起一个好记的名字
 主机 / 端口 / 数据库
 用户名
@@ -139,7 +140,7 @@ com.microsoft.sqlserver:mssql-jdbc:12.8.1.jre11
 
 ### 2. 打开查询并执行
 
-- 命令面板 → **Open DB Client: New Query**,或者
+- 命令面板 → **DB Client: New Query**,或者
 - 直接在任意 `.sql` 文件里用(需要先把文件关联到连接,见下)
 
 | 快捷键 | 行为 |
@@ -199,7 +200,7 @@ INSERT INTO users (|        -- 补全列名
 - 支持多条语句,执行前会自动剥离注释(块注释支持嵌套)
 - `INSERT`/`UPDATE`/`DELETE`/`DROP`/`TRUNCATE` 等破坏性语句默认二次确认
   (`open-dbclient.query.confirmDangerous`)
-- 长查询可取消:取消按钮 + **Open DB Client: Cancel Running Query**
+- 长查询可取消:取消按钮 + **DB Client: Cancel Running Query**
   (`Statement.cancel()` 真的会打到数据库,不是只丢结果)
 - 单次查询最多取 `100000` 行,超出会被标记截断
 
@@ -233,7 +234,7 @@ INSERT INTO users (|        -- 补全列名
 
 ### JDBC 健康监控
 
-状态栏实时显示桥的连接数/堆占用;点击或运行 **Open DB Client: Show JDBC Health** 打开
+状态栏实时显示桥的连接数/堆占用;点击或运行 **DB Client: Show JDBC Health** 打开
 Markdown 报告,包含:
 
 - 桥进程:JVM 堆使用、线程数、运行时长
@@ -254,7 +255,7 @@ Markdown 报告,包含:
 
 ## 命令与快捷键
 
-按 `Ctrl+Shift+P` 输入 `Open DB Client` 可以看到全部命令。
+按 `Ctrl+Shift+P` 输入 `DB Client` 可以看到全部命令。
 
 | 命令 | 说明 |
 |---|---|
@@ -419,11 +420,12 @@ npm run icon            # 重新生成扩展图标   → media/icon/icon.png
 ### 测试
 
 ```bash
-npm test        # 类型检查 + 30 项 Java 单元测试 + 24 项 SQL 上下文测试(无需数据库)
-npm run verify  # 上面全部 + 构建桥 + 118 项端到端检查(需要真实驱动)
+npm test        # 类型检查 + 文档与清单一致性 + 30 项 Java 测试 + 24 项 SQL 测试(无需数据库)
+npm run verify  # 上面全部 + 构建桥 + 冒烟检查
 ```
 
-端到端检查需要一个放了驱动的目录,用 Node 24 自带的 `node:sqlite` 造 fixture 库:
+冒烟检查需要一个放了驱动的目录。不传目录时它会打印提示并**直接跳过**(退出码 0),
+所以别把它当成跑过了 —— 想真正跑那 118 项检查要这样:
 
 ```bash
 mkdir -p /tmp/dbclient-drivers && cd /tmp/dbclient-drivers
@@ -432,6 +434,11 @@ curl -O https://repo1.maven.org/maven2/org/slf4j/slf4j-api/2.0.16/slf4j-api-2.0.
 
 cd - && npm run smoke -- /tmp/dbclient-drivers
 ```
+
+这里用 Node 24 自带的 `node:sqlite` 造 fixture 库,不需要装任何数据库。
+
+`scripts/check-docs.mjs` 会校验 README 里写的设置名、命令面板标签、快捷键、视图和链接是否
+真的存在 —— 这些都是不会让构建报错、但用户一用就撞上的错误。
 
 ### 目录结构
 
@@ -503,7 +510,9 @@ tag 名必须是 `v` 开头的语义化版本(`v0.2.0`)。发布产物里的版�
 手动打包(本地):
 
 ```bash
-npm run package   # → build/open-dbclient.vsix
+npm run package                                    # 先跑测试,再打包
+npm run package -- --no-verify                     # 跳过测试,只打包
+# → build/open-dbclient-0.1.0.vsix
 ```
 
 ---

@@ -49,6 +49,33 @@ function run(command, args, options = {}) {
   }
 }
 
+/**
+ * Runs a command that has to reach the network, and explains itself when it cannot.
+ *
+ * Building the archive is the one part of this project that genuinely needs the internet: it downloads
+ * the tarballs the archive will carry. A machine that is already air-gapped, or a shell that still has
+ * an offline npm configuration exported, will fail here - and the failure would otherwise look like a
+ * broken script rather than a missing network.
+ */
+function runOnline(command, args, options, what) {
+  const result = spawnSync(command, args, { cwd: root, stdio: 'inherit', ...options });
+  if (result.status === 0) {
+    return;
+  }
+
+  const offlineEnv = Object.keys(process.env).filter(
+    (name) => /^(npm_config_offline|npm_config_registry|npm_config_prefer_offline|http_proxy|https_proxy|all_proxy)$/i.test(name),
+  );
+  console.error(`\n[bundle] ${what} failed, and this step needs network access.`);
+  if (offlineEnv.length > 0) {
+    console.error(`        These variables are set and may be the reason: ${offlineEnv.join(', ')}`);
+    console.error('        Unset them and try again.');
+  } else {
+    console.error('        Check that this machine can reach its npm registry.');
+  }
+  process.exit(result.status ?? 1);
+}
+
 function capture(command, args, cwd = root) {
   try {
     return execFileSync(command, args, { cwd, encoding: 'utf8' }).trim();
@@ -116,7 +143,12 @@ console.log(`[bundle] source extracted to the staging area (${walk(sourceDir).le
 if (withCache) {
   const cacheDir = join(stagingRoot, 'npm-cache');
   console.log('[bundle] installing dependencies to populate the npm cache');
-  run('npm', ['ci', '--cache', cacheDir, '--loglevel=error'], { cwd: sourceDir });
+  runOnline(
+    'npm',
+    ['ci', '--cache', cacheDir, '--loglevel=error'],
+    { cwd: sourceDir },
+    'Downloading the dependencies',
+  );
 
   // The installed tree is only a means to fill the cache; the archive carries the cache instead, which
   // is about a tenth of the size and is what `npm ci --offline` actually reads. node_modules stays for

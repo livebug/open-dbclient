@@ -176,6 +176,24 @@ if (stale.length > 0) {
   check('no stale VSIX versions in the README');
 }
 
+// --- lockfile portability -------------------------------------------------------------------------
+
+// `resolved` records the URL a tarball came from, and npm fetches it verbatim unless it is the default
+// registry - in which case the user's configured registry takes over. A lockfile pinned to a mirror
+// therefore fails for anyone whose network only reaches a different one, which is exactly the
+// situation on an internal network.
+const lockfile = read('package-lock.json');
+const hosts = [...new Set([...lockfile.matchAll(/"resolved":\s*"https?:\/\/([^/"]+)/g)].map((m) => m[1]))];
+const foreignHosts = hosts.filter((host) => host !== 'registry.npmjs.org');
+if (foreignHosts.length > 0) {
+  fail(
+    `package-lock.json resolves packages from ${foreignHosts.join(', ')} instead of registry.npmjs.org. ` +
+      'That pins installs to one mirror and breaks on any network that reaches a different one.',
+  );
+} else {
+  check(`all lockfile URLs use the default registry (${hosts.length} host)`);
+}
+
 // --- result ---------------------------------------------------------------------------------------
 
 if (problems.length > 0) {

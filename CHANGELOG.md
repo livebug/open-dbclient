@@ -3,6 +3,21 @@
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/),格式参考
 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [未发布]
+
+### 变更
+
+- **`package-lock.json` 里的 `resolved` 规范化为公共源 `registry.npmjs.org`**。原先 301 条全部指向
+  `registry.npmmirror.com` —— npm 只会在地址是**默认源**时才替换成用户配置的 registry,写死成第三方
+  镜像后,在只放行自家私服的网络(例如内网 Nexus)里 `npm ci` 会直接失败。规范化后各人自己的
+  `npm config set registry` 都能生效;本机实测仍走原镜像,安装耗时不变
+
+### 新增
+
+- **离线开发支持**:`npm run bundle:offline` 打出一个自包含的压缩包(源码 + npm 缓存 + 已构建产物
+  + 驱动 jar + 说明),内网机器解包后 `npm ci --offline` 即可。另提供 `npm run doctor` 做环境体检。
+  完整流程见 [docs/offline.md](docs/offline.md)
+
 ## [0.2.0] - 2026-09-23
 
 ### 修复

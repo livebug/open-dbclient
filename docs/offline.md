@@ -101,6 +101,21 @@ code --install-extension build/open-dbclient-0.2.0.vsix
 
 或在 VS Code 里 `Ctrl+Shift+P` → **Extensions: Install from VSIX...**。
 
+### 5. 换成内网私服(可选,但建议)
+
+`package-lock.json` 里的 `resolved` 已经**全部规范化为公共源 `registry.npmjs.org`**。这一点是刻意的:
+
+npm 取包时用的是 `resolved` 里记的地址,**但只有当地址是默认源时才替换成你配置的 registry**。所以写成默认源,各人自己的 `npm config set registry` 就能生效 —— 无论你走公共源、公司私服还是内网 Nexus。反过来,如果 lockfile 被写死成某个第三方镜像(这个仓库曾经就是这样,301 条全指向 `registry.npmmirror.com`),那在只放行自家私服的网络里 `npm ci` 会直接失败。
+
+内网私服只需要:
+
+```bash
+npm config set registry https://nexus.内网域名/repository/npm-group/
+npm ci    # 有网时;没网就用 --offline --cache
+```
+
+`npm run docs` 会校验 lockfile 里没有非默认源的地址,防止悄悄回退。
+
 ---
 
 ## 三、内网里哪些功能用不了

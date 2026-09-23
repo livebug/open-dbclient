@@ -242,6 +242,45 @@ WHERE created_at >= ${V_DATE}
 - **Show Indexes**: 索引名、列、是否唯一
 - **Generate DDL**: 根据元数据生成 `CREATE TABLE` 语句
 
+生成的语句**风格**可配(见设置 `ddl.*`):缩进、`IF NOT EXISTS`、要不要追加索引段、标识符要不要加引号。
+
+有一件事刻意**不**可配:语句是怎么从元数据推导出来的。物理存储子句、表空间、引擎选项在 JDBC 元数据里
+根本拿不到,提供“自定义”只会是假的。取引号字符也是问数据库要的,不是写死的。
+
+### 自定义动作
+
+树上右键(或节点上的▸图标)可以跑你自己定义的 SQL。设置 `open-dbclient.actions` 里写一条就多一个动作:
+
+```jsonc
+"open-dbclient.actions": [
+  {
+    "id": "count",
+    "label": "统计行数",
+    "icon": "$(list-ordered)",
+    "appliesTo": ["table", "view"],
+    "sql": "SELECT COUNT(*) FROM ${qualifiedTable}"
+  },
+  {
+    "id": "recent",
+    "label": "最近 7 天",
+    "appliesTo": ["table"],
+    "sql": "SELECT * FROM ${qualifiedTable} ORDER BY ${column} DESC"
+  }
+]
+```
+
+可用占位符:`${table}` `${schema}` `${catalog}` `${qualifiedTable}` `${connectionName}` `${column}`。
+标识符用数据库自己上报的引号字符包裹。
+
+两个细节是刻意的:
+
+- **填不上的占位符会阻止动作,而不是变成空**。把 `${column}` 换成空串会得到能跑但结果是错的 SQL;
+  留在原处则一眼看得出没填
+- **语句会在一个已绑定连接的编辑器里打开,而不是静默执行**。这样你能看到跑的是什么、改完再跑
+
+> VS Code 的右键菜单是**静态**的,扩展不能动态往里塞 N 个按钮。所以自定义动作统一走这个入口;
+> 只有一个动作时直接执行,多个时弹列表选。
+
 ### 导出
 
 四种格式,不设行数上限(为了能整表导出):
@@ -295,6 +334,7 @@ Markdown 报告,包含:
 | Run All Queries | 执行整个文件所有语句 |
 | Cancel Running Query | 取消正在跑的查询 |
 | Select Top 200 Rows | 从树上直接预览表数据 |
+| Run Custom Action... | 在表/视图/列上跑自定义 SQL 动作 |
 | Show Query Variables | 打开参数面板 |
 | **导出** | |
 | Export Result... | 导出当前结果网格 |
@@ -374,6 +414,16 @@ Markdown 报告,包含:
 | `export.excel.maxRowsPerSheet` | number | `1048576` | xlsx 单 sheet 行数上限 |
 | `export.includeHeader` | boolean | `true` | 是否输出表头 |
 | `logLevel` | string | `"info"` | 桥日志级别 |
+
+### DDL 与自定义动作
+
+| 设置 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `ddl.ifNotExists` | boolean | `false` | 生成 `CREATE TABLE IF NOT EXISTS` |
+| `ddl.indent` | string | `"    "` | 列定义的缩进;空格、tab 或留空都行 |
+| `ddl.includeIndexes` | boolean | `true` | 是否在表后追 `CREATE INDEX` |
+| `ddl.quoteIdentifiers` | boolean | `true` | 标识符是否用数据库上报的引号字符包裹 |
+| `actions` | array | `[]` | 自定义 SQL 动作,见[自定义动作](#自定义动作) |
 
 ---
 

@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 
 import { describeError, log } from '../util/logger';
+import { mergeById, readEntries } from '../util/configMerge';
 
 /**
  * A convenience entry for the connection form.
@@ -17,33 +18,42 @@ export interface ConnectionTemplate {
   readonly jdbcUrlTemplate: string;
   readonly defaultPort?: number;
   readonly note?: string;
+  /** Set on a user copy to remove a bundled entry instead of replacing it. */
+  readonly disabled?: boolean;
 }
+
+/** Where a user copy of the bundled file is looked for, relative to global storage. */
+const USER_TEMPLATE_PATH = ['templates', 'connection-templates.json'];
 
 /** Built-in templates, loaded from the extension's resources. */
 export class ConnectionTemplates {
   private constructor(private readonly templates: readonly ConnectionTemplate[]) {}
 
   /**
-   * Reads the bundled template list.
+   * Reads the bundled template list, plus the user's copy of it if there is one.
    *
-   * A missing or malformed file yields an empty list rather than an error: templates are a
+   * A missing or malformed file yields whatever could be read rather than an error: templates are a
    * convenience, and the connection form works fine without them because the user can type the URL.
+   * The user file is optional and additive, merged by id, so that a new release can add an entry
+   * without every user having to update their copy.
    */
-  static async load(extensionUri: vscode.Uri): Promise<ConnectionTemplates> {
-    const uri = vscode.Uri.joinPath(extensionUri, 'resources', 'templates', 'connection-templates.json');
-    try {
-      const raw = await vscode.workspace.fs.readFile(uri);
-      const parsed = JSON.parse(new TextDecoder().decode(raw)) as { templates?: unknown };
-      const entries = Array.isArray(parsed.templates) ? parsed.templates : [];
-      const templates = entries
-        .map(toTemplate)
-        .filter((template): template is ConnectionTemplate => template !== undefined);
-      log.debug(`Loaded ${templates.length} connection template(s)`);
-      return new ConnectionTemplates(templates);
-    } catch (error) {
-      log.warn(`Connection templates could not be read: ${describeError(error)}`);
-      return new ConnectionTemplates([]);
+  static async load(context: vscode.ExtensionContext): Promise<ConnectionTemplates> {
+    const bundled = await readTemplateFile(
+      vscode.Uri.joinPath(context.extensionUri, 'resources', ...USER_TEMPLATE_PATH),
+      'bundled',
+    );
+    const user = await readTemplateFile(
+      vscode.Uri.joinPath(context.globalStorageUri, ...USER_TEMPLATE_PATH),
+      'user',
+    );
+
+    const templates = mergeById(bundled, user);
+    if (user.length > 0) {
+      log.info(
+        `Merged ${user.length} user connection template(s) over ${bundled.length} bundled one(s)`,
+      );
     }
+    return new ConnectionTemplates(templates);
   }
 
   list(): readonly ConnectionTemplate[] {
@@ -82,5 +92,34 @@ function toTemplate(raw: unknown): ConnectionTemplate | undefined {
     jdbcUrlTemplate: typeof record.jdbcUrlTemplate === 'string' ? record.jdbcUrlTemplate : '',
     defaultPort: typeof record.defaultPort === 'number' ? record.defaultPort : undefined,
     note: typeof record.note === 'string' ? record.note : undefined,
+    disabled: record.disabled === true ? true : undefined,
   };
+}
+
+/**
+ * Reads one template file.
+ *
+ * A file that is not there is not a problem - the bundled one always is, and the user's copy usually
+ * is not. Anything else is reported and treated as absent, because a convenience file must never be
+ * able to stop the extension from starting.
+ */
+async function readTemplateFile(uri: vscode.Uri, origin: string): Promise<readonly ConnectionTemplate[]> {
+  let raw: Uint8Array;
+  try {
+    raw = await vscode.workspace.fs.readFile(uri);
+  } catch {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(new TextDecoder().decode(raw)) as unknown;
+    const templates = readEntries(parsed, 'templates')
+      .map(toTemplate)
+      .filter((template): template is ConnectionTemplate => template !== undefined);
+    log.debug(`Read ${templates.length} ${origin} connection template(s)`);
+    return templates;
+  } catch (error) {
+    log.warn(`The ${origin} connection template file could not be parsed: ${describeError(error)}`);
+    return [];
+  }
 }

@@ -391,6 +391,45 @@ async function main() {
       check(ddl.includes('PRIMARY KEY'), 'primary key clause present');
       check(ddl.includes('NOT NULL'), 'nullability present');
       check(ddl.includes('idx_user_account_email'), 'index emitted alongside the table');
+
+      // The presentation options travel with the request, so this is the check that the extension
+      // and the bridge agree on the wire format rather than only inside their own tests.
+      const custom = await bridge.call('metadata.ddl', {
+        connectionId: 'fixture',
+        table: 'user_account',
+        options: { ifNotExists: true, indent: '\t', includeIndexes: false, quoteIdentifiers: false },
+      });
+      const customDdl = custom.result?.ddl ?? '';
+      check(custom.error === null, 'DDL generated with options', custom.error?.message);
+      check(
+        customDdl.startsWith('CREATE TABLE IF NOT EXISTS user_account'),
+        'IF NOT EXISTS and unquoted identifiers are applied',
+        customDdl.split('\n')[0],
+      );
+      check(customDdl.includes('\n\tid'), 'the custom indent is applied');
+      check(
+        !customDdl.includes('CREATE INDEX'),
+        'the index section is omitted when asked',
+        customDdl.split('\n').filter((line) => line.includes('INDEX')).join(' '),
+      );
+      check(
+        !customDdl.includes('"'),
+        'no identifier is quoted when quoting is off',
+      );
+
+      // An option the extension should never send must not cost the user their DDL.
+      const junk = await bridge.call('metadata.ddl', {
+        connectionId: 'fixture',
+        table: 'user_account',
+        options: { ifNotExists: 'yes', indent: 'x'.repeat(200) },
+      });
+      check(junk.error === null, 'unusable options fall back instead of failing', junk.error?.message);
+      check(
+        (junk.result?.ddl ?? '').startsWith('CREATE TABLE "user_account"'),
+        'the fallback is the default formatting',
+        (junk.result?.ddl ?? '').split('\n')[0],
+      );
+
       console.log(ddl.split('\n').map((line) => `        ${line}`).join('\n'));
 
       // Left open on purpose: shutdown has to cope with a live connection.

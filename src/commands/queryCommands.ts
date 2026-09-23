@@ -1,7 +1,6 @@
 import * as vscode from 'vscode';
 
-import { Commands, Config, connectionDirective } from '../constants';
-import { Methods } from '../bridge/protocol';
+import { Commands, Config, connectionDirective } from '../constants';import { Methods } from '../bridge/protocol';
 import type { QueryExecuteResult } from '../bridge/protocol';
 import { profileLabel, type ConnectionProfile } from '../model/ConnectionProfile';
 import type { DatabaseTreeNode, TableNode } from '../tree/nodeTypes';
@@ -9,6 +8,12 @@ import { qualifiedName } from '../tree/nodeTypes';
 import type { HistoryNode } from '../tree/HistoryTreeProvider';
 import { isSqlDocument } from '../service/SqlEditorBinding';
 import { VariablePanel } from '../webview/VariablePanel';
+import {
+  appliesTo,
+  expandAction,
+  parseActions,
+  unresolvedPlaceholders,
+} from '../sql/actionTemplate';
 import { ResultPanel } from '../webview/ResultPanel';
 import {
   isDestructive,
@@ -31,6 +36,7 @@ export function registerQueryCommands(dependencies: CommandDependencies): vscode
     ),
     register(Commands.runAllQueries, () => runFromEditor(dependencies, true)),
     register(Commands.runQueryFromTree, (node) => runTablePreview(dependencies, asNode(node))),
+    register(Commands.runCustomAction, (node) => runCustomAction(dependencies, asNode(node))),
     register(Commands.cancelQuery, () => cancelCurrent(dependencies)),
     register(Commands.exportResult, () => exportFromEditor(dependencies)),
     register(Commands.exportTable, (node) => exportTable(dependencies, asNode(node))),
@@ -347,8 +353,143 @@ async function runTablePreview(
   }
 }
 
-async function cancelCurrent(dependencies: CommandDependencies): Promise<void> {
-  const editor = vscode.window.activeTextEditor;
+/**
+ * Runs a user-defined SQL action against the node it was invoked on.
+ *
+ * The statement is opened in a real, bound editor rather than executed invisibly. That costs one
+ * document and buys three things: the user sees exactly what ran, can correct it and run it again,
+ * and the result panel needs no second code path for a source that is not an editor.
+ */
+async function runCustomAction(
+  dependencies: CommandDependencies,
+  node: DatabaseTreeNode | undefined,
+): Promise<void> {
+  const target = actionTargetOf(node);
+  if (!target) {
+    return;
+  }
+
+  const parsed = parseActions(
+    vscode.workspace.getConfiguration().get<unknown>(Config.customActions),
+  );
+  for (const problem of parsed.problems) {
+    log.warn(`Custom action definition ignored: ${problem}`);
+  }
+
+  const applicable = parsed.actions.filter((action) => appliesTo(action, target.kind));
+  if (applicable.length === 0) {
+    const action = await vscode.window.showInformationMessage(
+      parsed.actions.length === 0
+        ? 'No custom actions are defined yet.'
+        : `None of the ${parsed.actions.length} custom action(s) applies to a ${target.kind}.`,
+      'Open Settings',
+    );
+    if (action === 'Open Settings') {
+      await vscode.commands.executeCommand('workbench.action.openSettings', Config.customActions);
+    }
+    return;
+  }
+
+  const subject = target.column ? `${target.table}.${target.column}` : target.table;
+  const picked =
+    applicable.length === 1
+      ? applicable[0]
+      : (
+          await vscode.window.showQuickPick(
+            applicable.map((action) => ({
+              label: action.icon ? `${action.icon} ${action.label}` : action.label,
+              description: action.description,
+              detail: action.sql,
+              action,
+            })),
+            { title: `Run an action on ${subject}`, matchOnDescription: true, matchOnDetail: true },
+          )
+        )?.action;
+  if (!picked) {
+    return;
+  }
+
+  const profile = dependencies.store.find(target.connectionId);
+  if (!profile) {
+    void vscode.window.showErrorMessage('The connection for this object is no longer saved.');
+    return;
+  }
+  await ensureConnected(dependencies, profile);
+
+  const quote = dependencies.connections.capabilities(profile.id)?.identifierQuoteString;
+  const quote2 = (name: string | undefined) => (name ? quoteIdentifier(quote, name) : '');
+  const context = {
+    table: quote2(target.table),
+    schema: quote2(target.schema),
+    catalog: quote2(target.catalog),
+    // Matches how table preview qualifies a name: schema.table. A catalog is offered separately
+    // because databases that have catalogs and no schemas would otherwise get a two-part name built
+    // from an empty schema.
+    qualifiedTable: [quote2(target.schema), quote2(target.table)].filter(Boolean).join('.'),
+    connectionName: profileLabel(profile),
+    column: quote2(target.column),
+  };
+
+  const unresolved = unresolvedPlaceholders(picked.sql, context);
+  if (unresolved.length > 0) {
+    void vscode.window.showWarningMessage(
+      `The action '${picked.label}' uses ${unresolved.join(', ')}, which is not available on a ${target.kind}.`,
+    );
+    return;
+  }
+
+  const sql = expandAction(picked.sql, context);
+  const document = await vscode.workspace.openTextDocument({
+    language: 'sql',
+    content: `${connectionDirective(profile.name)}\n\n${sql}\n`,
+  });
+  const editor = await vscode.window.showTextDocument(document, { preview: false });
+
+  if (!(await confirmIfDestructive(sql))) {
+    return;
+  }
+  await execute(dependencies, editor, profile, sql);
+}
+
+/** What a node offers to an action template, or undefined for a node actions do not apply to. */
+function actionTargetOf(node: DatabaseTreeNode | undefined):
+  | {
+      kind: 'table' | 'view' | 'column';
+      connectionId: string;
+      catalog?: string;
+      schema?: string;
+      table: string;
+      column?: string;
+    }
+  | undefined {
+  if (!node) {
+    return undefined;
+  }
+  switch (node.kind) {
+    case 'table':
+    case 'view':
+      return {
+        kind: node.kind,
+        connectionId: node.connectionId,
+        catalog: node.catalog,
+        schema: node.schema,
+        table: node.table.name,
+      };
+    case 'column':
+      return {
+        kind: 'column',
+        connectionId: node.connectionId,
+        catalog: node.catalog,
+        schema: node.schema,
+        table: node.table,
+        column: node.column.name,
+      };
+    default:
+      return undefined;
+  }
+}
+
+async function cancelCurrent(dependencies: CommandDependencies): Promise<void> {  const editor = vscode.window.activeTextEditor;
   const profile = editor ? await resolveProfile(dependencies, editor.document) : undefined;
   if (!profile) {
     void vscode.window.showInformationMessage('No connection is associated with this editor.');

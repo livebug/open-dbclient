@@ -305,6 +305,9 @@ export class DatabaseTreeProvider
         kind: 'column' as const,
         connectionId: node.connectionId,
         column,
+        catalog: node.catalog,
+        schema: node.schema,
+        table: node.table.name,
       }));
 
     // Indexes only make sense for tables; a view has none to list.

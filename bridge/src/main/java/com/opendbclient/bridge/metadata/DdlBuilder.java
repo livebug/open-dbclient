@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Map;
 
 import com.opendbclient.bridge.conn.MetadataSupport;
+import com.opendbclient.bridge.json.Json;
 import com.opendbclient.bridge.log.Log;
 import com.opendbclient.bridge.rpc.Protocol;
 import com.opendbclient.bridge.rpc.RpcException;
@@ -37,6 +38,65 @@ public final class DdlBuilder {
     }
 
     /**
+     * Presentation choices for the generated statement.
+     *
+     * <p>These exist because "the DDL" is not one thing: teams disagree about {@code IF NOT EXISTS},
+     * indentation and whether indexes belong in the same file, and none of those arguments can be
+     * settled by the extension. They are options rather than a template language on purpose - a
+     * template would be a second way to describe a table, and every database would need its own
+     * escape hatches from it.
+     *
+     * <p>What is deliberately not adjustable: how the statement is derived from metadata. Physical
+     * storage clauses, tablespaces and engine options are not recoverable from JDBC metadata, so
+     * there is nothing honest to expose.
+     */
+    public record Options(
+            boolean ifNotExists,
+            String indent,
+            boolean includeIndexes,
+            boolean quoteIdentifiers) {
+
+        /** The longest indent that is still recognisably an indent. */
+        private static final int MAX_INDENT_LENGTH = 32;
+
+        public static final Options DEFAULT = new Options(false, "    ", true, true);
+
+        /**
+         * Reads the options from a request payload.
+         *
+         * Anything absent or unusable falls back to the default rather than failing the request:
+         * a malformed option should not cost the user their DDL.
+         */
+        public static Options from(Map<String, Object> params) {
+            if (params == null) {
+                return DEFAULT;
+            }
+            return new Options(
+                    Json.bool(params, "ifNotExists", DEFAULT.ifNotExists()),
+                    sanitizeIndent(Json.str(params, "indent", DEFAULT.indent())),
+                    Json.bool(params, "includeIndexes", DEFAULT.includeIndexes()),
+                    Json.bool(params, "quoteIdentifiers", DEFAULT.quoteIdentifiers()));
+        }
+
+        /**
+         * Keeps an indent that is actually an indent.
+         *
+         * A tab, spaces or nothing at all are all reasonable; a newline or a paragraph of text is
+         * not, because the indent is emitted once per column and would produce unusable SQL.
+         */
+        private static String sanitizeIndent(String indent) {
+            if (indent == null) {
+                return DEFAULT.indent();
+            }
+            String cleaned = indent.replace("\r", "").replace("\n", "");
+            if (cleaned.length() > MAX_INDENT_LENGTH) {
+                return DEFAULT.indent();
+            }
+            return cleaned;
+        }
+    }
+
+    /**
      * Builds the DDL for one table.
      *
      * @throws RpcException with {@code NOT_FOUND} when the driver reports no columns, which usually
@@ -47,6 +107,21 @@ public final class DdlBuilder {
             String catalog,
             String schema,
             String table) throws SQLException {
+        return createTable(connection, catalog, schema, table, Options.DEFAULT);
+    }
+
+    /**
+     * Builds the DDL for one table, with the caller's presentation choices applied.
+     *
+     * @throws RpcException with {@code NOT_FOUND} when the driver reports no columns, which usually
+     *                      means the table name did not resolve
+     */
+    public static String createTable(
+            Connection connection,
+            String catalog,
+            String schema,
+            String table,
+            Options options) throws SQLException {
 
         DatabaseMetaData meta = connection.getMetaData();
         List<ColumnInfo> columns = MetadataProvider.columns(connection, catalog, schema, table);
@@ -56,10 +131,15 @@ public final class DdlBuilder {
                             + "', so no DDL could be generated (is the name correct?)");
         }
 
-        String quote = MetadataSupport.identifierQuote(meta);
+        // An empty quote is how every identifier helper below is told to leave names bare.
+        String quote = options.quoteIdentifiers() ? MetadataSupport.identifierQuote(meta) : "";
         StringBuilder ddl = new StringBuilder(512);
 
-        ddl.append("CREATE TABLE ").append(qualifiedName(quote, schema, table)).append(" (\n");
+        ddl.append("CREATE TABLE ");
+        if (options.ifNotExists()) {
+            ddl.append("IF NOT EXISTS ");
+        }
+        ddl.append(qualifiedName(quote, schema, table)).append(" (\n");
 
         // The table body is assembled as elements first, then emitted with commas inserted before
         // any trailing comment. Interleaving the two while appending is how a comma ends up after a
@@ -84,7 +164,7 @@ public final class DdlBuilder {
 
         for (int i = 0; i < elements.size(); i++) {
             Element element = elements.get(i);
-            ddl.append("    ").append(element.sql());
+            ddl.append(options.indent()).append(element.sql());
             if (i < elements.size() - 1) {
                 ddl.append(',');
             }
@@ -96,7 +176,9 @@ public final class DdlBuilder {
 
         ddl.append(')');
 
-        appendIndexes(ddl, connection, catalog, schema, table, quote);
+        if (options.includeIndexes()) {
+            appendIndexes(ddl, connection, catalog, schema, table, quote);
+        }
         return ddl.toString();
     }
 

@@ -132,11 +132,14 @@ public final class MetadataHandlers {
             String schema = optional(params, "schema");
             String table = Json.requireStr(params, "table");
 
+            // Presentation only; the statement is still derived entirely from JDBC metadata.
+            DdlBuilder.Options options = DdlBuilder.Options.from(Json.mapValue(params, "options"));
+
             return withConnection(services, connectionId, connection ->
                     Json.obj(
                             "table", table,
                             "schema", schema,
-                            "ddl", DdlBuilder.createTable(connection, catalog, schema, table)));
+                            "ddl", DdlBuilder.createTable(connection, catalog, schema, table, options)));
         });
     }
 

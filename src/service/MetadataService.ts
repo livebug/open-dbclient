@@ -1,3 +1,6 @@
+import * as vscode from 'vscode';
+
+import { Config } from '../constants';
 import type { JdbcBridge } from '../bridge/JdbcBridge';
 import { Methods } from '../bridge/protocol';
 import type {
@@ -95,9 +98,28 @@ export class MetadataService {
   }
 
   async ddl(reference: TableReference): Promise<string> {
-    const result = await this.bridge.request<{ ddl: string }>(Methods.metadataDdl, withTable(reference));
+    const result = await this.bridge.request<{ ddl: string }>(Methods.metadataDdl, {
+      ...withTable(reference),
+      options: ddlOptions(),
+    });
     return result.ddl ?? '';
   }
+}
+
+/**
+ * The DDL presentation settings, read at call time.
+ *
+ * Read here rather than passed in by each caller so that "Show DDL" and any future caller of the same
+ * metadata behave identically; a setting that only some paths honour is worse than none.
+ */
+function ddlOptions(): Record<string, unknown> {
+  const configuration = vscode.workspace.getConfiguration();
+  return {
+    ifNotExists: configuration.get<boolean>(Config.ddlIfNotExists, false),
+    indent: configuration.get<string>(Config.ddlIndent, '    '),
+    includeIndexes: configuration.get<boolean>(Config.ddlIncludeIndexes, true),
+    quoteIdentifiers: configuration.get<boolean>(Config.ddlQuoteIdentifiers, true),
+  };
 }
 
 function withTable(reference: TableReference): Record<string, unknown> {

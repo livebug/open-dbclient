@@ -43,7 +43,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   const store = new ConnectionStore(context);
   const history = new QueryHistoryStore(context);
-  const templates = await ConnectionTemplates.load(context.extensionUri);
+  const templates = await ConnectionTemplates.load(context);
 
   await Promise.all([store.load(), history.load()]);
 

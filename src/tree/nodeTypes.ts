@@ -66,6 +66,16 @@ export interface ColumnNode extends NodeBase {
   readonly kind: 'column';
   readonly connectionId: string;
   readonly column: ColumnInfo;
+  /**
+   * The table the column belongs to.
+   *
+   * Carried on the node because a column is meaningless without it: an action offered on a column has
+   * to name a table, and the node id has to stay unique - `column|conn|id` collides between two
+   * tables that both have an `id` column, which makes the tree reuse the wrong expansion state.
+   */
+  readonly catalog?: string;
+  readonly schema?: string;
+  readonly table: string;
 }
 
 export interface IndexNode extends NodeBase {
@@ -96,7 +106,7 @@ export function nodeKey(node: DatabaseTreeNode): string {
     case 'view':
       return `${node.kind}|${node.connectionId}|${node.catalog ?? ''}|${node.schema ?? ''}|${node.table.name}`;
     case 'column':
-      return `column|${node.connectionId}|${node.column.name}`;
+      return `column|${node.connectionId}|${node.catalog ?? ''}|${node.schema ?? ''}|${node.table}|${node.column.name}`;
     case 'index':
       return `index|${node.connectionId}|${node.index.name}|${node.index.ordinal}`;
     default:

@@ -156,6 +156,12 @@
         "icon": "$(symbol-parameter)"
       },
       {
+        "command": "open-dbclient.runCustomAction",
+        "title": "Run Custom Action...",
+        "category": "DB Client",
+        "icon": "$(play)"
+      },
+      {
         "command": "open-dbclient.runQueryFromTree",
         "title": "Select Top 200 Rows",
         "category": "DB Client",
@@ -362,6 +368,11 @@
           "group": "inline@1"
         },
         {
+          "command": "open-dbclient.runCustomAction",
+          "when": "view == open-dbclient.connections && viewItem =~ /^(table|view|column)$/",
+          "group": "inline@3"
+        },
+        {
           "command": "open-dbclient.generateDdl",
           "when": "view == open-dbclient.connections && viewItem =~ /^(table|view)$/",
           "group": "inline@2"
@@ -546,6 +557,73 @@
           "type": "string",
           "default": "\\$\\{\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*\\}",
           "markdownDescription": "Regular expression that finds a parameter in a SQL script, with one capture group for its name. The default matches `${V_DATE}`. Matching text with no capture group is used whole as the name. Values are substituted before the statement runs; a placeholder with no value stops the run rather than being replaced by an empty string."
+        },
+        "open-dbclient.ddl.ifNotExists": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Generate `CREATE TABLE IF NOT EXISTS` rather than `CREATE TABLE`."
+        },
+        "open-dbclient.ddl.indent": {
+          "type": "string",
+          "default": "    ",
+          "markdownDescription": "Indent used for each generated column definition. Spaces, a tab or nothing at all."
+        },
+        "open-dbclient.ddl.includeIndexes": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Append `CREATE INDEX` statements after the table. Turn off when indexes are managed separately from table definitions."
+        },
+        "open-dbclient.ddl.quoteIdentifiers": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Quote identifiers with the character the database itself reports. Turn off for a plain, unquoted name."
+        },
+        "open-dbclient.actions": {
+          "type": "array",
+          "default": [],
+          "markdownDescription": "Your own SQL actions, offered on tables, views and columns in the connection tree. Reachable from the play icon on a node, or from the command palette.\n\nA template may use `${table}`, `${schema}`, `${catalog}`, `${qualifiedTable}`, `${connectionName}` and `${column}`. Identifiers are quoted with the character the database reports. A placeholder that cannot be filled for the node stops the action instead of being replaced by nothing.\n\nThe statement opens in a bound editor rather than running invisibly, so you can see it, change it, and run it again.",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "label",
+              "sql"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Stable identifier, shown next to the label in the picker."
+              },
+              "label": {
+                "type": "string",
+                "description": "What the action is called."
+              },
+              "description": {
+                "type": "string",
+                "description": "Optional: shown as the action's description in the picker."
+              },
+              "icon": {
+                "type": "string",
+                "description": "Optional icon, e.g. $(list-ordered)."
+              },
+              "appliesTo": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "table",
+                    "view",
+                    "column"
+                  ]
+                },
+                "description": "Where the action is offered. Omit to offer it everywhere."
+              },
+              "sql": {
+                "type": "string",
+                "description": "The statement, with optional ${...} placeholders."
+              }
+            }
+          }
         },
         "open-dbclient.result.maxCacheBytes": {
           "type": "number",

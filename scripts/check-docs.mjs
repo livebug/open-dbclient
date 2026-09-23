@@ -160,6 +160,22 @@ if (declaredPattern === DEFAULT_VARIABLE_PATTERN) {
   );
 }
 
+// --- stale version numbers ------------------------------------------------------------------------
+
+// An install command or a build output path that names a concrete release is wrong the moment the
+// next one ships, and nothing about reading it later suggests it is out of date. Only the current
+// version may appear in a `open-dbclient-<version>.vsix` path.
+const vsixVersions = [...readme.matchAll(/open-dbclient-(\d+\.\d+\.\d+)\.vsix/g)].map((m) => m[1]);
+const stale = vsixVersions.filter((version) => version !== pkg.version);
+if (stale.length > 0) {
+  fail(
+    `README names a VSIX from another release: ${[...new Set(stale)].join(', ')} ` +
+      `(current is ${pkg.version}); use <版本> instead`,
+  );
+} else {
+  check('no stale VSIX versions in the README');
+}
+
 // --- result ---------------------------------------------------------------------------------------
 
 if (problems.length > 0) {

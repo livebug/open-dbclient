@@ -2,7 +2,7 @@
   "name": "open-dbclient",
   "displayName": "Open DB Client",
   "description": "Universal JDBC database client: connect, SQL IntelliSense, execute, export, table structure and health monitoring.",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "publisher": "open-dbclient",
   "license": "MIT",
   "icon": "media/icon/icon.png",

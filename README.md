@@ -64,7 +64,7 @@ flowchart LR
 命令行等价写法:
 
 ```
-code --install-extension open-dbclient-0.1.0.vsix
+code --install-extension open-dbclient-<版本>.vsix
 ```
 
 ### 方式二:从源码构建安装
@@ -607,13 +607,13 @@ src/
 
 ```bash
 # 1. 更新版本号与 CHANGELOG
-npm version 0.2.0 --no-git-tag-version
+npm version 0.3.0 --no-git-tag-version
 
 # 2. 提交
-git add -A && git commit -m "chore: release 0.2.0"
+git add -A && git commit -m "chore: release 0.3.0"
 
 # 3. 打 tag 并推送 —— 这一步会触发自动发版
-git tag v0.2.0
+git tag v0.3.0
 git push origin main --tags
 ```
 
@@ -632,7 +632,7 @@ tag 名必须是 `v` 开头的语义化版本(`v0.2.0`)。发布产物里的版�
 ```bash
 npm run package                                    # 先跑测试,再打包
 npm run package -- --no-verify                     # 跳过测试,只打包
-# → build/open-dbclient-0.1.0.vsix
+# → build/open-dbclient-<版本>.vsix
 ```
 
 ---

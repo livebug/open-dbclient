@@ -1,12 +1,17 @@
 /**
- * User-defined SQL actions for the connection tree.
+ * Placeholder expansion for user-written SQL.
  *
- * The tree's built-in "Select Top 200 Rows" is fixed in code, so anything else a user runs regularly -
- * counting rows, looking at the last week, checking for nulls - has to be retyped every time. These
- * definitions turn that into a named action.
+ * Two features need this: custom actions in the tree, and the statement used to fetch a table's DDL.
+ * They differ in what a name means, which is why the placeholders say so explicitly:
  *
- * Kept free of `vscode` so the substitution rules can be tested directly. A placeholder that silently
- * expands to nothing produces SQL that runs and returns the wrong rows, which is worse than an error.
+ * - the raw and `quoted` forms are separate names rather than one name with a clever default, because
+ *   the right spelling depends on where the name lands. `FROM` wants it quoted; a string literal passed
+ *   to `pg_get_tabledef('...')` must not be, and Hive's `DESC` usually takes it bare. Guessing produces
+ *   SQL that runs and finds nothing.
+ * - an unknown or unavailable `${...}` is left in place rather than blanked, so a mistake is visible in
+ *   the editor instead of turning into a query against the empty string.
+ *
+ * Kept free of `vscode` so the rules can be tested directly.
  */
 
 /** Where an action is offered. */
@@ -24,26 +29,89 @@ export interface ActionDefinition {
 
 /** The values a template may refer to. */
 export interface ActionContext {
-  /** Table or view name, quoted for the database. */
+  /** Names exactly as the driver reported them. */
   readonly table: string;
   readonly schema: string;
   readonly catalog: string;
   /** `schema.table`, or just the table when there is no schema. */
-  readonly qualifiedTable: string;
-  readonly connectionName: string;
-  /** Column name, quoted. Only meaningful for actions offered on a column. */
+  readonly qualified: string;
+
+  /**
+   * Only present when the action was invoked on a column.
+   *
+   * Absent rather than empty on purpose: a template using `${column}` on a table must be refused, not
+   * expanded to nothing. `WHERE x = ` is a syntax error, but `LIKE '%${column}%'` quietly matches
+   * everything, and a wrong answer is worse than a refusal.
+   */
   readonly column?: string;
+
+  /** The same names wrapped in the quoting character the database reported. */
+  readonly quotedTable: string;
+  readonly quotedSchema: string;
+  readonly quotedCatalog: string;
+  readonly quotedQualified: string;
+  readonly quotedColumn?: string;
+
+  readonly connectionName: string;
 }
 
-/** The placeholders a template may use, for the error message and for documentation. */
+/** The placeholders a template may use. Documented in the settings that expose templates. */
 export const ACTION_PLACEHOLDERS = [
   '${table}',
   '${schema}',
   '${catalog}',
-  '${qualifiedTable}',
-  '${connectionName}',
+  '${qualified}',
   '${column}',
+  '${quotedTable}',
+  '${quotedSchema}',
+  '${quotedCatalog}',
+  '${quotedQualified}',
+  '${quotedColumn}',
+  '${connectionName}',
 ] as const;
+
+export interface ActionContextInput {
+  readonly catalog?: string;
+  readonly schema?: string;
+  readonly table: string;
+  readonly column?: string;
+  readonly connectionName: string;
+  /** The quote character the database reported, or undefined when it cannot quote. */
+  readonly quote: string | undefined;
+}
+
+/** Quotes one identifier the way the database asks, doubling any embedded quote character. */
+function quoteName(name: string, quote: string | undefined): string {
+  if (!quote || name === '') {
+    return name;
+  }
+  return quote + name.split(quote).join(quote + quote) + quote;
+}
+
+/** Builds the values a template may refer to. */
+export function buildActionContext(input: ActionContextInput): ActionContext {
+  const catalog = input.catalog ?? '';
+  const schema = input.schema ?? '';
+  const parts = [schema, input.table].filter((part) => part !== '');
+  const column = input.column ?? '';
+
+  const context: ActionContext = {
+    table: input.table,
+    schema,
+    catalog,
+    qualified: parts.join('.'),
+    quotedTable: quoteName(input.table, input.quote),
+    quotedSchema: quoteName(schema, input.quote),
+    quotedCatalog: quoteName(catalog, input.quote),
+    quotedQualified: parts.map((part) => quoteName(part, input.quote)).join('.'),
+    connectionName: input.connectionName,
+  };
+
+  if (column === '') {
+    return context;
+  }
+  return { ...context, column, quotedColumn: quoteName(column, input.quote) };
+}
 
 const TARGETS: readonly ActionTarget[] = ['table', 'view', 'column'];
 
@@ -164,4 +232,92 @@ export function unresolvedPlaceholders(sql: string, context: ActionContext): str
     }
   }
   return [...missing];
+}
+
+// ---------------------------------------------------------------------------
+// DDL queries
+// ---------------------------------------------------------------------------
+
+/**
+ * How to ask a particular database for a table's DDL.
+ *
+ * Reconstructing a `CREATE TABLE` from JDBC metadata only goes so far: it cannot see storage clauses,
+ * tablespaces or engine options, and it cannot know about types the driver reports as `OTHER`. Many
+ * databases already answer the question directly, and the answer is better than anything that could be
+ * reassembled - `SHOW CREATE TABLE` on MySQL, `DESC` on Hive, `pg_get_tabledef` on PostgreSQL. Those
+ * statements are dialect-specific, which is precisely why the user writes them and the extension only
+ * runs them and shows what came back.
+ */
+export interface DdlQuery {
+  readonly id: string;
+  /**
+   * Glob tested against the connection's JDBC URL, where `*` matches any run of characters.
+   *
+   * Absent means every connection. Matched case-insensitively against the whole URL, so
+   * `jdbc:hive2:*` selects Hive and `jdbc:postgresql:*` selects PostgreSQL.
+   */
+  readonly match?: string;
+  readonly sql: string;
+}
+
+/** Reads DDL query rules out of the setting value, dropping entries that cannot work. */
+export function parseDdlQueries(raw: unknown): { queries: DdlQuery[]; problems: string[] } {
+  const queries: DdlQuery[] = [];
+  const problems: string[] = [];
+
+  if (raw === undefined || raw === null) {
+    return { queries, problems };
+  }
+  if (!Array.isArray(raw)) {
+    return { queries, problems: ['The DDL queries setting must be a list.'] };
+  }
+
+  const seen = new Set<string>();
+  for (const [index, entry] of raw.entries()) {
+    const where = `entry ${index + 1}`;
+    if (typeof entry !== 'object' || entry === null) {
+      problems.push(`${where} is not an object.`);
+      continue;
+    }
+    const record = entry as Record<string, unknown>;
+    const sql = typeof record.sql === 'string' ? record.sql : '';
+    if (sql.trim() === '') {
+      problems.push(`${where} has no SQL.`);
+      continue;
+    }
+
+    // An id is only needed to tell two rules apart in a message, so one is generated when it is absent
+    // rather than rejecting a rule that is otherwise usable.
+    const declared = typeof record.id === 'string' ? record.id.trim() : '';
+    const id = declared === '' ? `ddl-${index + 1}` : declared;
+    if (seen.has(id)) {
+      problems.push(`${where} reuses the id '${id}'.`);
+      continue;
+    }
+
+    const match = typeof record.match === 'string' ? record.match.trim() : '';
+    seen.add(id);
+    queries.push({ id, sql, match: match === '' ? undefined : match });
+  }
+
+  return { queries, problems };
+}
+
+/** Turns a glob into an anchored, case-insensitive pattern. Only `*` is special. */
+export function globToRegExp(glob: string): RegExp {
+  // Everything that means something to a regular expression is escaped; `*` is replaced by a marker so
+  // it survives that escaping, then turned into the wildcard.
+  const marker = '\u0000';
+  const escaped = glob.replace(/[.*+?^${}()|[\]\\]/g, (char) => (char === '*' ? marker : `\\${char}`));
+  return new RegExp(`^${escaped.split(marker).join('.*')}$`, 'i');
+}
+
+/**
+ * The rule that applies to a connection, or undefined to use the built-in generator.
+ *
+ * The first match in document order wins, so a broad rule placed after a narrow one acts as a
+ * fallback - the only ordering anybody expects from a list like this.
+ */
+export function matchDdlQuery(url: string, queries: readonly DdlQuery[]): DdlQuery | undefined {
+  return queries.find((query) => query.match === undefined || globToRegExp(query.match).test(url));
 }

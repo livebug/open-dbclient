@@ -558,6 +558,31 @@
           "default": "\\$\\{\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*\\}",
           "markdownDescription": "Regular expression that finds a parameter in a SQL script, with one capture group for its name. The default matches `${V_DATE}`. Matching text with no capture group is used whole as the name. Values are substituted before the statement runs; a placeholder with no value stops the run rather than being replaced by an empty string."
         },
+        "open-dbclient.ddl.queries": {
+          "type": "array",
+          "default": [],
+          "markdownDescription": "Ask the database for a table's DDL instead of reconstructing it from JDBC metadata. Many databases answer this directly and better: `SHOW CREATE TABLE` on MySQL, `DESC` on Hive, `pg_get_tabledef` on PostgreSQL. Those statements are dialect-specific, so they are yours to write.\n\nThe **first rule whose `match` fits the connection's JDBC URL wins**; `*` matches any characters and the whole URL must match. A rule with no `match` fits every connection, so put it last to use it as a fallback. With no matching rule the built-in generator runs, which is what keeps the default behaviour unchanged.\n\nA template may use `${table}`, `${schema}`, `${catalog}`, `${qualified}`, `${column}` and `${connectionName}` for the **names as the driver reported them**, or `${quotedTable}`, `${quotedSchema}`, `${quotedCatalog}`, `${quotedQualified}` and `${quotedColumn}` for the same names wrapped in the database's quoting character. Use the unquoted forms in a string literal - `pg_get_tabledef('${qualified}')` - and the quoted ones where an identifier is expected.\n\nThe result is shown as the database returned it: one cell becomes a document, anything else opens in the result grid. The `ddl.ifNotExists`, `ddl.indent`, `ddl.includeIndexes` and `ddl.quoteIdentifiers` settings apply only to the built-in generator, so they are ignored when a rule matches.",
+          "items": {
+            "type": "object",
+            "required": [
+              "sql"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Optional name for the rule, used in messages."
+              },
+              "match": {
+                "type": "string",
+                "description": "Glob tested against the JDBC URL, e.g. jdbc:hive2:*. Omit to match every connection."
+              },
+              "sql": {
+                "type": "string",
+                "description": "The statement to run, with optional ${...} placeholders."
+              }
+            }
+          }
+        },
         "open-dbclient.ddl.ifNotExists": {
           "type": "boolean",
           "default": false,
@@ -581,7 +606,7 @@
         "open-dbclient.actions": {
           "type": "array",
           "default": [],
-          "markdownDescription": "Your own SQL actions, offered on tables, views and columns in the connection tree. Reachable from the play icon on a node, or from the command palette.\n\nA template may use `${table}`, `${schema}`, `${catalog}`, `${qualifiedTable}`, `${connectionName}` and `${column}`. Identifiers are quoted with the character the database reports. A placeholder that cannot be filled for the node stops the action instead of being replaced by nothing.\n\nThe statement opens in a bound editor rather than running invisibly, so you can see it, change it, and run it again.",
+          "markdownDescription": "Your own SQL actions, offered on tables, views and columns in the connection tree. Reachable from the play icon on a node, or from the command palette.\n\nA template may use `${table}`, `${schema}`, `${catalog}`, `${qualified}`, `${column}` and `${connectionName}` for the **names as the driver reported them**, or `${quotedTable}`, `${quotedSchema}`, `${quotedCatalog}`, `${quotedQualified}` and `${quotedColumn}` for the same names wrapped in the database's quoting character. Use the quoted forms where an identifier is expected - `SELECT COUNT(*) FROM ${quotedQualified}` - and the unquoted ones inside a string literal.\n\nA placeholder that cannot be filled for the node - `${column}` on a table, say - stops the action instead of being replaced by nothing, because `LIKE '%${column}%'` expanding to `LIKE '%%'` would quietly match everything.\n\nThe statement opens in a bound editor rather than running invisibly, so you can see it, change it, and run it again.",
           "items": {
             "type": "object",
             "required": [

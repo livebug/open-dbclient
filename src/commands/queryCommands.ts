@@ -10,8 +10,11 @@ import { isSqlDocument } from '../service/SqlEditorBinding';
 import { VariablePanel } from '../webview/VariablePanel';
 import {
   appliesTo,
+  buildActionContext,
   expandAction,
+  matchDdlQuery,
   parseActions,
+  parseDdlQueries,
   unresolvedPlaceholders,
 } from '../sql/actionTemplate';
 import { ResultPanel } from '../webview/ResultPanel';
@@ -417,18 +420,14 @@ async function runCustomAction(
   await ensureConnected(dependencies, profile);
 
   const quote = dependencies.connections.capabilities(profile.id)?.identifierQuoteString;
-  const quote2 = (name: string | undefined) => (name ? quoteIdentifier(quote, name) : '');
-  const context = {
-    table: quote2(target.table),
-    schema: quote2(target.schema),
-    catalog: quote2(target.catalog),
-    // Matches how table preview qualifies a name: schema.table. A catalog is offered separately
-    // because databases that have catalogs and no schemas would otherwise get a two-part name built
-    // from an empty schema.
-    qualifiedTable: [quote2(target.schema), quote2(target.table)].filter(Boolean).join('.'),
+  const context = buildActionContext({
+    catalog: target.catalog,
+    schema: target.schema,
+    table: target.table,
+    column: target.column,
     connectionName: profileLabel(profile),
-    column: quote2(target.column),
-  };
+    quote,
+  });
 
   const unresolved = unresolvedPlaceholders(picked.sql, context);
   if (unresolved.length > 0) {
@@ -681,6 +680,14 @@ async function showIndexes(
   }
 }
 
+/**
+ * Shows the DDL for a table.
+ *
+ * A user-written query takes precedence over the built-in generator whenever one matches the
+ * connection. The generator reconstructs a `CREATE TABLE` from JDBC metadata, which cannot see storage
+ * clauses or types the driver reports as `OTHER`; a database that can describe its own tables does it
+ * better, and for several databases that is the only way to get a usable answer at all.
+ */
 async function showDdl(
   dependencies: CommandDependencies,
   node: DatabaseTreeNode | undefined,
@@ -689,17 +696,134 @@ async function showDdl(
     return;
   }
   const table = node as TableNode;
+  const path = qualifiedName(table.catalog, table.schema, table.table.name);
+
   try {
+    const profile = dependencies.store.find(table.connectionId);
+    const rule = profile ? matchDdlQuery(profile.url, ddlQueryRules()) : undefined;
+    if (profile && rule) {
+      await showDdlFromQuery(dependencies, table, profile, path, rule);
+      return;
+    }
+
     const ddl = await dependencies.metadata.ddl({
       connectionId: table.connectionId,
       catalog: table.catalog,
       schema: table.schema,
       table: table.table.name,
     });
-    const path = qualifiedName(table.catalog, table.schema, table.table.name);
     await dependencies.virtualDocuments.show(`${path}`, 'sql', ddl);
   } catch (error) {
     void vscode.window.showErrorMessage(`Could not generate DDL: ${describeError(error)}`);
+  }
+}
+
+/** The configured DDL queries, with anything unusable reported once. */
+function ddlQueryRules(): ReturnType<typeof parseDdlQueries>['queries'] {
+  const parsed = parseDdlQueries(
+    vscode.workspace.getConfiguration().get<unknown>(Config.ddlQueries),
+  );
+  for (const problem of parsed.problems) {
+    log.warn(`DDL query definition ignored: ${problem}`);
+  }
+  return parsed.queries;
+}
+
+/**
+ * Runs a user-written DDL query and shows whatever came back.
+ *
+ * The result is shown as the database returned it rather than reinterpreted, because there is no
+ * useful generalisation: `DESC` answers with rows and columns, and a function like
+ * `pg_get_tabledef` answers with one long string. A single cell is opened as text, since a
+ * multi-kilobyte `CREATE TABLE` inside a grid cell has to be double-clicked before it can be read.
+ */
+async function showDdlFromQuery(
+  dependencies: CommandDependencies,
+  table: TableNode,
+  profile: ConnectionProfile,
+  path: string,
+  rule: { id: string; sql: string },
+): Promise<void> {
+  await ensureConnected(dependencies, profile);
+
+  const quote = dependencies.connections.capabilities(profile.id)?.identifierQuoteString;
+  const context = buildActionContext({
+    catalog: table.catalog,
+    schema: table.schema,
+    table: table.table.name,
+    connectionName: profileLabel(profile),
+    quote,
+  });
+
+  const unresolved = unresolvedPlaceholders(rule.sql, context);
+  if (unresolved.length > 0) {
+    void vscode.window.showWarningMessage(
+      `The DDL query '${rule.id}' uses ${unresolved.join(', ')}, which is not available for this table.`,
+    );
+    return;
+  }
+
+  const sql = expandAction(rule.sql, context);
+  const queryId = nextQueryId();
+
+  const result = await vscode.window.withProgress(
+    { location: vscode.ProgressLocation.Notification, title: `Reading the DDL of ${path}` },
+    () =>
+      dependencies.bridge.request<QueryExecuteResult>(
+        Methods.queryExecute,
+        {
+          connectionId: profile.id,
+          sql,
+          queryId,
+          // These statements describe a table, so their result is small by construction; a ceiling
+          // would only be a way to truncate the answer.
+          maxRows: 0,
+          pageSize: vscode.workspace.getConfiguration().get<number>(Config.fetchSize, 200),
+          fetchSize: vscode.workspace.getConfiguration().get<number>(Config.fetchSize, 200),
+        },
+        { timeoutMs: 0 },
+      ),
+  );
+
+  const single =
+    result.hasResultSet && result.totalRows === 1 && (result.columns ?? []).length === 1
+      ? result.rows?.[0]?.[0]
+      : undefined;
+
+  if (typeof single === 'string' && single.trim() !== '') {
+    // The statement is shown alongside the result, so a surprising answer can be traced back to the
+    // query that produced it without guessing which rule matched.
+    await dependencies.virtualDocuments.show(
+      `${path}`,
+      'sql',
+      `-- ${rule.id}: ${sql}\n\n${single}`,
+    );
+    await releaseResult(dependencies, result.queryId ?? queryId);
+    return;
+  }
+
+  const panel = await ResultPanel.show({
+    key: `${profile.id}:ddl:${path}`,
+    title: `DDL - ${table.table.name}`,
+    extensionUri: dependencies.extensionUri,
+    bridge: dependencies.bridge,
+    connections: dependencies.connections,
+    exportService: dependencies.exportService,
+    onRerun: async () => {
+      await showDdl(dependencies, table);
+    },
+  });
+  panel.setRunning(sql, profileLabel(profile));
+  panel.setResult(result, sql, profileLabel(profile));
+}
+
+/** Frees a cached result that nobody is going to page through. */
+async function releaseResult(dependencies: CommandDependencies, queryId: string): Promise<void> {
+  try {
+    await dependencies.bridge.request(Methods.queryClose, { queryId });
+  } catch (error) {
+    // Not worth reporting: the result is evicted by the cache budget anyway.
+    log.debug(`Releasing the DDL result '${queryId}' failed: ${describeError(error)}`);
   }
 }
 

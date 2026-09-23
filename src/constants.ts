@@ -109,6 +109,7 @@ export const Config = {
   ddlIndent: `${EXTENSION_ID}.ddl.indent`,
   ddlIncludeIndexes: `${EXTENSION_ID}.ddl.includeIndexes`,
   ddlQuoteIdentifiers: `${EXTENSION_ID}.ddl.quoteIdentifiers`,
+  ddlQueries: `${EXTENSION_ID}.ddl.queries`,
   customActions: `${EXTENSION_ID}.actions`,
   intellisenseEnabled: `${EXTENSION_ID}.intellisense.enabled`,
   intellisensePrefetchTables: `${EXTENSION_ID}.intellisense.prefetchTables`,

@@ -26,19 +26,26 @@
 
 ### 新增
 
-- **生成的 DDL 现在可配置风格**:`ddl.ifNotExists`、`ddl.indent`、`ddl.includeIndexes`、
-  `ddl.quoteIdentifiers`。刻意做成几个选项而不是模板语言 —— 模板等于"用第二种方式描述一张表",
-  而每个数据库都得从模板里再开逃逸口。同样刻意不开放的是"语句怎么从元数据推导":
-  物理存储子句、表空间、引擎选项在 JDBC 元数据里拿不到
-- **自定义 SQL 动作**(`actions` 设置):在表、视图、列上按自己的模板跑 SQL,支持
-  `${table}` `${schema}` `${catalog}` `${qualifiedTable}` `${connectionName}` `${column}`。
-  填不上的占位符会**阻止**执行而不是变成空串;语句在已绑定连接的编辑器里打开而不是静默执行
+- **取 DDL 的 SQL 可以自己写**(`ddl.queries`)。很多数据库本来就能直接给出建表语句,而且比"从 JDBC
+  元数据重建"更准 —— 重建看不到存储子句、表空间、引擎选项,也看不到驱动报成 `OTHER` 的类型。规则按连接
+  URL 的 glob 匹配,第一条命中生效;没有命中才回到内置重建,所以默认行为不变。示例:
+  `DESC ${qualified}`(Hive)、`SELECT pg_get_tabledef('${qualified}')`(PostgreSQL)、
+  `SHOW CREATE TABLE ${quotedQualified}`(MySQL)。结果按数据库返回的样子展示:单单元格开成文本,
+  否则开结果网格
+- **占位符显式区分原始名与加引号名**。这是必须的而不是洁癖:`pg_get_tabledef('${quotedQualified}')`
+  会去找一张**名字里带引号**的表 —— 不报语法错,只是找不到。现在 `${qualified}` 是原始名(用于字符串
+  字面量、Hive 的 `DESC`),`${quotedQualified}` 才加引号。这个改动同时作用于自定义动作
+- **自定义 SQL 动作**(`actions` 设置):在表、视图、列上按自己的模板跑 SQL。填不上的占位符会**阻止**
+  执行而不是变成空串(`LIKE '%%'` 那种静默错配比直接拒绝危险得多);语句在已绑定连接的编辑器里打开,
+  而不是静默执行
 - **连接模板的用户覆盖真正生效了**。文件里一直写着"可以把副本放到
   `<globalStorage>/templates/connection-templates.json`,按 `id` 合并",但代码从未读过那个路径 ——
   是"打算这么做"被当成"已经这么做"写进了文档。现在实现了,并支持用 `disabled` 移除内置条目
 - **连接改用单页表单,带「测试联通」按钮**。必须测试通过才能保存:存一个连不上的连接,问题要到
   第一次查询时才暴露。测试走桥的独立探测通道(开完即关,不进连接池),所以测一个已经连着的连接
   不会干扰它。字段里的 JDBC URL 会随驱动选择自动预填(仅在为空时,不覆盖已填内容)
+- **内置 DDL 生成器的风格选项**:`ddl.ifNotExists`、`ddl.indent`、`ddl.includeIndexes`、
+  `ddl.quoteIdentifiers`。有规则匹配时这些不生效
 - `query.maxRows`:可配置的取数行数上限(`0` 表示不限),命中上限会标记为截断
 - **表树筛选**:按名称过滤表、视图、列、索引,生效时视图描述显示 `filter: 关键字`
 - `result.openIn`:结果面板位置,默认 `below`(上下分屏)

@@ -240,12 +240,50 @@ WHERE created_at >= ${V_DATE}
 
 - **Show Columns**: 列名、类型、长度、是否可空、默认值、注释
 - **Show Indexes**: 索引名、列、是否唯一
-- **Generate DDL**: 根据元数据生成 `CREATE TABLE` 语句
+- **Generate DDL**: 见下
 
-生成的语句**风格**可配(见设置 `ddl.*`):缩进、`IF NOT EXISTS`、要不要追加索引段、标识符要不要加引号。
+#### 取 DDL 的 SQL 可以自己写(推荐)
 
-有一件事刻意**不**可配:语句是怎么从元数据推导出来的。物理存储子句、表空间、引擎选项在 JDBC 元数据里
-根本拿不到,提供“自定义”只会是假的。取引号字符也是问数据库要的,不是写死的。
+很多数据库**本来就能直接告诉你建表语句**,而且比任何"从 JDBC 元数据重建"的结果都准 —— 重建看不到
+存储子句、表空间、引擎选项,也看不到驱动报成 `OTHER` 的类型。
+
+这些语句是方言相关的,所以由你写,插件只负责执行并把结果展示出来。设置 `open-dbclient.ddl.queries`:
+
+```jsonc
+"open-dbclient.ddl.queries": [
+  // 第一条匹配连接 URL 的规则生效;* 匹配任意字符,整条 URL 必须匹配
+  { "id": "hive",   "match": "jdbc:hive2:*",      "sql": "DESC ${qualified}" },
+  { "id": "pgsql",  "match": "jdbc:postgresql:*", "sql": "SELECT pg_get_tabledef('${qualified}')" },
+  { "id": "mysql",  "match": "jdbc:mysql:*",      "sql": "SHOW CREATE TABLE ${quotedQualified}" },
+  { "id": "oracle", "match": "jdbc:oracle:*",     "sql": "SELECT DBMS_METADATA.GET_DDL('TABLE', '${table}') FROM DUAL" },
+
+  // 没有 match 的规则匹配一切,放最后当兜底
+  { "id": "fallback", "sql": "SELECT 1" }
+]
+```
+
+**没有规则匹配时,才用内置的元数据重建**,所以默认行为不变。
+
+占位符分两种 —— 这个区分很关键:
+
+| 用途 | 写法 | 展开成 |
+|---|---|---|
+| 字符串字面量里 / Hive 的 `DESC` 后 | `${table}` `${schema}` `${catalog}` `${qualified}` `${column}` | 驱动上报的**原始名字**,不加引号 |
+| 需要标识符的位置 | `${quotedTable}` `${quotedSchema}` `${quotedCatalog}` `${quotedQualified}` `${quotedColumn}` | 用数据库上报的引号字符包裹 |
+
+搞反了的后果:`pg_get_tabledef('${quotedQualified}')` 会去找一张**名字里带引号**的表,不报语法错,只是找不到。
+`${qualified}` 在没有 schema 的库上不会产生开头的点(`DESC .table` 那种)。
+
+结果的展示方式:数据库返回**一个单元格**就打开成文本(PostgreSQL 那种一长串 `CREATE TABLE` 在网格单元里
+得双击才能看),否则开结果网格(`DESC` 返回的是多行多列)。文本里会带上实际执行的 SQL,便于回溯是哪条规则生效了。
+
+#### 内置生成器的风格选项
+
+不写规则时用内置重建,它的**格式**可配:`ddl.ifNotExists`、`ddl.indent`、`ddl.includeIndexes`、
+`ddl.quoteIdentifiers`。有规则匹配时这些设置不生效。
+
+刻意**不**开放的是"语句怎么从元数据推导":物理存储子句、表空间、引擎选项在 JDBC 元数据里根本拿不到,
+提供"自定义"只会是假的 —— 这也是上面那套自定义 SQL 存在的理由。
 
 ### 自定义动作
 
@@ -258,25 +296,25 @@ WHERE created_at >= ${V_DATE}
     "label": "统计行数",
     "icon": "$(list-ordered)",
     "appliesTo": ["table", "view"],
-    "sql": "SELECT COUNT(*) FROM ${qualifiedTable}"
+    "sql": "SELECT COUNT(*) FROM ${quotedQualified}"
   },
   {
     "id": "recent",
     "label": "最近 7 天",
     "appliesTo": ["table"],
-    "sql": "SELECT * FROM ${qualifiedTable} ORDER BY ${column} DESC"
+    "sql": "SELECT * FROM ${quotedQualified} ORDER BY ${quotedColumn} DESC"
   }
 ]
 ```
 
-可用占位符:`${table}` `${schema}` `${catalog}` `${qualifiedTable}` `${connectionName}` `${column}`。
-标识符用数据库自己上报的引号字符包裹。
+占位符与 DDL 查询**完全一致**(原始名 / 加引号名两套),见上面的表。
 
-两个细节是刻意的:
+三个细节是刻意的:
 
-- **填不上的占位符会阻止动作,而不是变成空**。把 `${column}` 换成空串会得到能跑但结果是错的 SQL;
-  留在原处则一眼看得出没填
+- **填不上的占位符会阻止动作,而不是变成空**。`LIKE '%${column}%'` 展开成 `LIKE '%%'` 会静默匹配所有行,
+  比直接拒绝危险得多
 - **语句会在一个已绑定连接的编辑器里打开,而不是静默执行**。这样你能看到跑的是什么、改完再跑
+- **没有 `appliesTo` 的动作在所有节点上出现**;写了就只在列出的类型上出现
 
 > VS Code 的右键菜单是**静态**的,扩展不能动态往里塞 N 个按钮。所以自定义动作统一走这个入口;
 > 只有一个动作时直接执行,多个时弹列表选。
@@ -419,10 +457,11 @@ Markdown 报告,包含:
 
 | 设置 | 类型 | 默认 | 说明 |
 |---|---|---|---|
-| `ddl.ifNotExists` | boolean | `false` | 生成 `CREATE TABLE IF NOT EXISTS` |
-| `ddl.indent` | string | `"    "` | 列定义的缩进;空格、tab 或留空都行 |
-| `ddl.includeIndexes` | boolean | `true` | 是否在表后追 `CREATE INDEX` |
-| `ddl.quoteIdentifiers` | boolean | `true` | 标识符是否用数据库上报的引号字符包裹 |
+| `ddl.queries` | array | `[]` | 自己写的取 DDL 语句,按连接 URL 匹配,见[取 DDL 的 SQL 可以自己写](#取-ddl-的-sql-可以自己写推荐) |
+| `ddl.ifNotExists` | boolean | `false` | 内置生成器:生成 `CREATE TABLE IF NOT EXISTS` |
+| `ddl.indent` | string | `"    "` | 内置生成器:列定义的缩进;空格、tab 或留空都行 |
+| `ddl.includeIndexes` | boolean | `true` | 内置生成器:是否在表后追 `CREATE INDEX` |
+| `ddl.quoteIdentifiers` | boolean | `true` | 内置生成器:标识符是否加数据库上报的引号字符 |
 | `actions` | array | `[]` | 自定义 SQL 动作,见[自定义动作](#自定义动作) |
 
 ---

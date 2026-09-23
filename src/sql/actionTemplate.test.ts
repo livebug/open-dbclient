@@ -9,19 +9,22 @@ import assert from 'node:assert/strict';
 
 import {
   appliesTo,
+  buildActionContext,
   expandAction,
+  globToRegExp,
+  matchDdlQuery,
   parseActions,
+  parseDdlQueries,
   unresolvedPlaceholders,
-  type ActionContext,
 } from './actionTemplate.ts';
 
-const context: ActionContext = {
-  table: '"orders"',
-  schema: '"public"',
-  catalog: '"shop"',
-  qualifiedTable: '"public"."orders"',
+const context = buildActionContext({
+  catalog: 'shop',
+  schema: 'public',
+  table: 'orders',
   connectionName: 'Production',
-};
+  quote: '"',
+});
 
 test('reads a complete definition', () => {
   const { actions, problems } = parseActions([
@@ -93,25 +96,38 @@ test('an action with appliesTo is only offered where it says', () => {
   assert.equal(appliesTo(actions[0], 'column'), false);
 });
 
-test('expands every known placeholder', () => {
-  const sql = 'SELECT * FROM ${qualifiedTable} WHERE t = ${table} AND s = ${schema} AND c = ${catalog}';
-  assert.equal(
-    expandAction(sql, context),
-    'SELECT * FROM "public"."orders" WHERE t = "orders" AND s = "public" AND c = "shop"',
-  );
+test('the raw placeholders are the names the driver reported', () => {
+  // Not quoted: this is the form that belongs inside a string literal or after Hive's DESC.
+  const sql = 'DESC ${qualified}';
+  assert.equal(expandAction(sql, context), 'DESC public.orders');
 });
 
-test('the connection name expands, since it is the one value that is not a real identifier', () => {
-  assert.equal(
-    expandAction("SELECT '${connectionName}' AS source", context),
-    "SELECT 'Production' AS source",
-  );
+test('the quoted placeholders are wrapped by the database quoting character', () => {
+  const sql = 'SELECT * FROM ${quotedQualified} JOIN ${quotedTable} ON 1 = 1';
+  assert.equal(expandAction(sql, context), 'SELECT * FROM "public"."orders" JOIN "orders" ON 1 = 1');
 });
 
-test('an unknown placeholder is left in place rather than blanked', () => {
+test('a name containing the quote character is doubled', () => {
+  const awkward = buildActionContext({ schema: 'p', table: 'we"ird', connectionName: 'c', quote: '"' });
+  assert.equal(awkward.quotedTable, '"we""ird"');
+});
+
+test('a database that cannot quote leaves the name bare', () => {
+  const bare = buildActionContext({ table: 'mixed Case', connectionName: 'c', quote: undefined });
+  assert.equal(bare.quotedTable, 'mixed Case');
+  assert.equal(bare.qualified, 'mixed Case');
+});
+
+test('a schema-less database does not produce a leading dot', () => {
+  // The failure this prevents: `DESC .table`, which no Hive server will parse.
+  const noSchema = buildActionContext({ table: 'orders', connectionName: 'c', quote: '"' });
+  assert.equal(noSchema.qualified, 'orders');
+  assert.equal(noSchema.quotedQualified, '"orders"');
+});
+
+test('an unavailable placeholder is left in place rather than blanked', () => {
   // Blanking it would produce a query that runs and returns the wrong answer, which is the failure
-  // mode worth engineering against: `WHERE x = ` would be a syntax error, but `WHERE x = ` inside a
-  // string, or `LIKE ''`, would not.
+  // mode worth engineering against.
   assert.equal(expandAction('SELECT ${nonsense}', context), 'SELECT ${nonsense}');
 });
 
@@ -120,7 +136,15 @@ test('column is left in place for an action that is not offered on a column', ()
 });
 
 test('column expands when the context has one', () => {
-  assert.equal(expandAction('SELECT ${column}', { ...context, column: '"id"' }), 'SELECT "id"');
+  const withColumn = buildActionContext({
+    schema: 'public',
+    table: 'orders',
+    column: 'id',
+    connectionName: 'c',
+    quote: '"',
+  });
+  assert.equal(expandAction('SELECT ${quotedColumn}', withColumn), 'SELECT "id"');
+  assert.equal(expandAction('SELECT ${column}', withColumn), 'SELECT id');
 });
 
 test('unresolved placeholders are reported once each', () => {
@@ -129,10 +153,95 @@ test('unresolved placeholders are reported once each', () => {
 });
 
 test('a resolved template reports nothing missing', () => {
-  assert.deepEqual(unresolvedPlaceholders('SELECT * FROM ${qualifiedTable}', context), []);
+  assert.deepEqual(unresolvedPlaceholders('SELECT * FROM ${quotedQualified}', context), []);
+  assert.deepEqual(unresolvedPlaceholders('DESC ${qualified}', context), []);
 });
 
 test('a template with no placeholders is returned unchanged', () => {
   assert.equal(expandAction('SELECT 1', context), 'SELECT 1');
   assert.deepEqual(unresolvedPlaceholders('SELECT 1', context), []);
+});
+
+// ---------------------------------------------------------------------------
+// DDL queries
+// ---------------------------------------------------------------------------
+
+test('reads a DDL query rule, generating an id when none is given', () => {
+  const { queries, problems } = parseDdlQueries([
+    { match: 'jdbc:hive2:*', sql: 'DESC ${qualified}' },
+    { id: 'pg', match: 'jdbc:postgresql:*', sql: "SELECT pg_get_tabledef('${qualified}')" },
+  ]);
+  assert.deepEqual(problems, []);
+  assert.deepEqual(queries.map((query) => query.id), ['ddl-1', 'pg']);
+  assert.equal(queries[0].sql, 'DESC ${qualified}');
+});
+
+test('a rule with no match applies to every connection', () => {
+  const { queries } = parseDdlQueries([{ id: 'any', sql: 'SELECT 1' }]);
+  assert.equal(queries[0].match, undefined);
+  assert.equal(matchDdlQuery('jdbc:anything:at:all', queries)?.id, 'any');
+});
+
+test('a rule without SQL is dropped and named', () => {
+  const { queries, problems } = parseDdlQueries([
+    { id: 'good', sql: 'SELECT 1' },
+    { id: 'empty', sql: '   ' },
+    { id: 'missing' },
+  ]);
+  assert.deepEqual(queries.map((query) => query.id), ['good']);
+  assert.equal(problems.length, 2);
+});
+
+test('a duplicate DDL query id is rejected, keeping the first', () => {
+  const { queries, problems } = parseDdlQueries([
+    { id: 'same', sql: 'SELECT 1' },
+    { id: 'same', sql: 'SELECT 2' },
+  ]);
+  assert.equal(queries.length, 1);
+  assert.equal(queries[0].sql, 'SELECT 1');
+  assert.match(problems[0], /reuses the id/);
+});
+
+test('a non-list DDL queries setting is reported', () => {
+  const { queries, problems } = parseDdlQueries({ id: 'x', sql: 'SELECT 1' });
+  assert.deepEqual(queries, []);
+  assert.equal(problems.length, 1);
+});
+
+test('the glob wildcard matches any run of characters', () => {
+  assert.equal(globToRegExp('jdbc:hive2:*').test('jdbc:hive2://host:10000/default'), true);
+  assert.equal(globToRegExp('jdbc:hive2:*').test('jdbc:postgresql://host/db'), false);
+});
+
+test('the glob is anchored, so a partial match is not a match', () => {
+  // Without anchoring, `postgres` would select `jdbc:not-postgres:...`, which is the kind of silent
+  // wrong-database match that is hard to notice.
+  assert.equal(globToRegExp('jdbc:postgresql:*').test('jdbc:postgresql://h/db'), true);
+  assert.equal(globToRegExp('postgres').test('jdbc:postgresql://h/db'), false);
+});
+
+test('the glob is case-insensitive and treats regex characters literally', () => {
+  assert.equal(globToRegExp('JDBC:hive2:*').test('jdbc:hive2://h'), true);
+  // A dot is a literal dot, not "any character".
+  assert.equal(globToRegExp('jdbc.hive2').test('jdbcXhive2'), false);
+  assert.equal(globToRegExp('jdbc:h2:mem:test(db)').test('jdbc:h2:mem:test(db)'), true);
+});
+
+test('a question mark is literal, not a wildcard', () => {
+  assert.equal(globToRegExp('jdbc:hsqldb:mem:?').test('jdbc:hsqldb:mem:x'), false);
+  assert.equal(globToRegExp('jdbc:hsqldb:mem:?').test('jdbc:hsqldb:mem:?'), true);
+});
+
+test('the first matching rule wins, so a catch-all after it is a fallback', () => {
+  const { queries } = parseDdlQueries([
+    { id: 'hive', match: 'jdbc:hive2:*', sql: 'DESC ${qualified}' },
+    { id: 'fallback', sql: 'SELECT 1' },
+  ]);
+  assert.equal(matchDdlQuery('jdbc:hive2://h', queries)?.id, 'hive');
+  assert.equal(matchDdlQuery('jdbc:mysql://h', queries)?.id, 'fallback');
+});
+
+test('with no rules there is no match, which is what keeps the built-in generator in use', () => {
+  assert.equal(matchDdlQuery('jdbc:sqlite:/tmp/x.db', []), undefined);
+  assert.equal(matchDdlQuery('jdbc:sqlite:/tmp/x.db', parseDdlQueries([{ id: 'h', match: 'jdbc:hive2:*', sql: 'DESC x' }]).queries), undefined);
 });

@@ -46,11 +46,30 @@ const release = process.argv.includes('--release');
  */
 function jarTimestamp() {
   const epoch = Number(process.env.SOURCE_DATE_EPOCH);
-  const seconds = Number.isFinite(epoch) && epoch > 0 ? epoch : commitEpoch();
-  // A date that is deliberately not "now": there is no correct value outside a git checkout.
-  const moment = seconds === null ? new Date(Date.UTC(1980, 0, 1)) : new Date(seconds * 1000);
-  return moment.toISOString().replace(/\.\d{3}Z$/, 'Z');
+  const chosen = Number.isFinite(epoch) && epoch > 0 ? epoch : commitEpoch();
+
+  // A source tree that is not a git checkout - a release tarball, for instance - has no commit time to
+  // read, and neither does a machine whose clock is set somewhere absurd. Both are clamped into what
+  // `jar` accepts rather than passed through: the alternative is a build failing with a message about
+  // a date range, which says nothing about where the date came from.
+  const seconds =
+    chosen === null
+      ? JAR_EPOCH_RANGE.min
+      : Math.min(Math.max(chosen, JAR_EPOCH_RANGE.min), JAR_EPOCH_RANGE.max);
+
+  return new Date(seconds * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z');
 }
+
+/**
+ * The range `jar --date` accepts: 1980-01-01T00:00:02Z through 2099-12-31T23:59:59Z.
+ *
+ * The lower bound is two seconds after midnight, which is the detail that made every build from a
+ * source tarball fail: a date of exactly 1980-01-01T00:00:00Z is rejected, and that was the fallback.
+ */
+const JAR_EPOCH_RANGE = {
+  min: Date.UTC(1980, 0, 1, 0, 0, 2) / 1000,
+  max: Date.UTC(2099, 11, 31, 23, 59, 59) / 1000,
+};
 
 /** Commit time as a Unix timestamp, or null when git is unavailable or this is not a checkout. */
 function commitEpoch() {

@@ -749,6 +749,8 @@
     "verify": "npm test && npm run bridge:compile && npm run smoke --",
     "icon": "node scripts/make-icon.mjs",
     "package": "node scripts/package.mjs",
+    "bundle:offline": "node scripts/make-offline-bundle.mjs",
+    "doctor": "node scripts/offline-doctor.mjs",
     "vscode:prepublish": "npm run typecheck && npm run compile && npm run bridge:compile -- --release"
   },
   "devDependencies": {

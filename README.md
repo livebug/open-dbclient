@@ -560,6 +560,27 @@ cd - && npm run smoke -- /tmp/dbclient-drivers
 `scripts/check-docs.mjs` 会校验 README 里写的设置名、命令面板标签、快捷键、视图和链接是否
 真的存在 —— 这些都是不会让构建报错、但用户一用就撞上的错误。
 
+### 内网 / 离线开发
+
+整个流程里**只有 `npm install` 需要联网**,其余(Java 桥构建、扩展打包、全部测试)都是本地的。
+所以拿进内网只需要把 `npm ci` 需要的 tarball 带进去:
+
+```bash
+# 在有网的机器上(注意:要在与目标机器相同的 OS/CPU 架构上打)
+npm run bundle:offline -- --drivers /path/to/jdbc-drivers
+# → build/open-dbclient-offline-<版本>-<平台>.tar.gz,约 43 MB
+```
+
+包里有源码、npm 缓存、已构建好的产物、驱动 jar、以及一份说明。拿到内网后先跑体检,再照说明走:
+
+```bash
+node scripts/offline-doctor.mjs --cache ../npm-cache   # 检查 Node/npm/JDK 是否齐备
+npm ci --offline --cache ../npm-cache
+```
+
+完整步骤、内网里哪些功能不能用(如"从 Maven Central 下载驱动")、以及二开时的注意事项,
+见 **[docs/offline.md](docs/offline.md)**。
+
 ### 目录结构
 
 ```

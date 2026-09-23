@@ -22,3 +22,8 @@ out/test/**
 build/**
 package-lock.json
 **/*.vsix
+
+# Documentation for building the project, not for using it. It ships in the offline
+# bundle, which is where it is needed; in the extension package the README links to it
+# on the repository instead.
+docs/**

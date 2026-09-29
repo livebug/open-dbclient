@@ -118,9 +118,11 @@ export const Config = {
   healthRefreshInterval: `${EXTENSION_ID}.health.refreshInterval`,
   healthShowStatusBar: `${EXTENSION_ID}.health.showStatusBar`,
   csvDelimiter: `${EXTENSION_ID}.export.csv.delimiter`,
+  csvQuoting: `${EXTENSION_ID}.export.csv.quoting`,
   csvWriteBom: `${EXTENSION_ID}.export.csv.writeBom`,
   excelMaxRowsPerSheet: `${EXTENSION_ID}.export.excel.maxRowsPerSheet`,
   includeHeader: `${EXTENSION_ID}.export.includeHeader`,
+  useColumnRemarks: `${EXTENSION_ID}.export.useColumnRemarks`,
   logLevel: `${EXTENSION_ID}.logLevel`,
 } as const;
 

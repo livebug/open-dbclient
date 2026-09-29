@@ -172,7 +172,9 @@ SELECT id, name FROM users WHERE created_at > '2026-01-01';
 
 ```sql
 SELECT * FROM ord|          -- 补全表名
+SELECT * FROM public.|      -- 补全 schema 里的表(schema 名也会在 FROM 后提示)
 SELECT u.|                  -- 补全 u 这个别名/表的所有列
+SELECT na|                  -- 还没写 FROM 也能补列:光标后的 FROM 子句也算数
 SELECT * FROM users WHERE na|   -- 即使还没写 FROM 的表,有 alias 也能补列
 INSERT INTO users (|        -- 补全列名
 ```
@@ -183,6 +185,12 @@ INSERT INTO users (|        -- 补全列名
 ---
 
 ## 功能详解
+
+### 界面语言
+
+扩展的界面跟随 VS Code 的显示语言:命令面板、视图名、设置说明、结果网格、变量视图、连接表单
+与健康监控报告都有**简体中文**与英文两套文案。繁体环境会用简体文案 —— 与自己的邻国文字比
+一个字都看不懂要好。(命令分类仍写作 `DB Client`。)
 
 ### 连接管理
 
@@ -196,16 +204,20 @@ INSERT INTO users (|        -- 补全列名
 
 ### SQL 智能补全
 
-- 表名补全:`FROM` / `JOIN` / `INTO` / `UPDATE` / `USING` 之后
-- 列名补全:带别名或表名限定时,只补该表的列
+- 表名补全:`FROM` / `JOIN` / `INTO` / `UPDATE` / `USING` 之后,同时提示 schema / 目录名
+- **限定名补全**:`public.|` 会列出该 schema 下的表 —— 前提是 `public` 确实是数据库上报的
+  schema;否则按表名/别名当作列补全处理
+- 列名补全:带别名或表名限定时,只补该表的列;**`SELECT` 之后也补列**(会往后看同一语句的
+  `FROM`),补全项的辅助信息写明该列属于 `schema.表`
+- 列的注释(注释里往往写着中文名)会显示在补全项的文档里
 - 关键字与代码片段补全:`sel` `ins` `upd` `del` `joi` `cre` `wit`
 - 补全逻辑跑在扩展进程内(**不走 IPC**),所以不占用每次按键的往返延迟
 - 元数据按需加载并做 LRU 缓存(`intellisense.columnCacheLimit`)
 
 ### 脚本参数(变量)
 
-脚本里的 `${名字}` 会被当作参数。打开含参数的脚本时,下方会自动弹出参数面板 —— 支持随便改,
-行得通再执行:
+脚本里的 `${名字}` 会被当作参数。变量视图在**底部面板**(和终端、输出、问题同一排)里,页签名
+叫 **SQL 脚本变量**,打开含参数的脚本即自动更新:
 
 ```sql
 SELECT * FROM orders
@@ -213,6 +225,10 @@ WHERE created_at >= ${V_DATE}
   AND status = ${V_STATUS};
 ```
 
+- 变量在**一个固定的页签里编辑**,不再随窗口大小抢编辑器的位置,也不会在输入时重建整页
+  (输入过程中光标不会跳、界面不闪)
+- **DB Client: Show Query Variables** 可以把该页签切到前台;因为某个变量没填值而拒绝执行时也会
+  自动切过去并把光标放到没填的输入框
 - 变量样式可自定义:设置 `variables.pattern` 为正则(**需带一个捕获组**作为变量名)。不写捕获组
   时整个匹配当作变量名
 - 变量值按**工作区**保存,同一个 `${V_DATE}` 在各脚本里含义一致
@@ -231,6 +247,10 @@ WHERE created_at >= ${V_DATE}
 ### 结果网格
 
 - 虚拟滚动:几十万行也不卡(界面每页 200 行,按需从磁盘拉)
+- **列注释即中文名**:驱动上报了列的注释时,表头显示注释,下面一行小字仍然是物理列名与类型
+  —— 只看注释没法写 SQL,只看列名又读不懂 `AMT_01`。双击单元格可看完整值
+- 多次查询的结果**开在同一个区域**(第一次查询时向下分屏,之后都是该区域里的新页签),
+  不会每查一次就再挤掉一条编辑器的宽度;想把结果放右边可用 `result.openIn` = `beside`
 - 单元格值:超过 64 KiB 截断显示;大于 2^53 的整数与 `BigDecimal` **转成字符串**避免精度丢失;
   二进制显示为 `[blob N bytes...]`
 - 结果集**不经过 IPC**:桥直接落盘成临时文件,内存占用有上限
@@ -325,13 +345,27 @@ WHERE created_at >= ${V_DATE}
 
 | 格式 | 说明 |
 |---|---|
-| **CSV** | CRLF 换行,可选 UTF-8 BOM(默认开;Excel 没 BOM 时按本地码页解析,中文会乱码) |
+| **CSV** | CRLF 换行,可选 UTF-8 BOM(默认开;Excel 没 BOM 时按本地码页解析,中文会乱码)。**导出时会先问分隔符与引号策略**:分隔符最长 8 个字符,除了逗号/分号/制表符/竖线,还可以是数据里不可能出现的形式如 `~@~` |
 | **JSON** | 对象数组,保留类型 |
 | **Excel (.xlsx)** | 超大数据自动拆多 sheet;字符串按 inline 写入,不需要全量内存 |
 | **INSERT 语句** | 可直接搬到别的库执行;数值列上为保精度而存成字符串的值会**不加引号**输出 |
 
 两个入口:**导出查询结果**(Export Result)和**直接导出整张表**(Export Table,不用先查一遍)。
 写文件失败时会删除半成品文件。
+
+CSV 与 Excel 的表头默认用**列的注释**(也就是中文名,`export.useColumnRemarks`);JSON 与 INSERT
+仍然用物理列名 —— 那两种格式是给程序读的,注释当键会让导出文件不再能原样导回去。
+
+CSV 的引号策略三选一(`export.csv.quoting`,导出时也会问):
+
+- `minimal`(默认):只在该字段含分隔符、引号或换行时才加引号 —— 文件在纯文本编辑器里最好读
+- `always`:每个字段和表头都加引号
+- `never`:完全不加。文件更小更干净,但值里一旦出现分隔符就无法解析回去 —— 真发生时导出后会提示
+  **多少个字段**属于这种情况,而不是静静地把坑埋起来 |
+
+分隔符可以是多字符:数据里全是逗号、分号、制表符和竖线时,只有它们都**产生不了**的分隔符才安全,
+`~@~` 就是常见的答案。写入端因此按**子串**而不是字符判断该不该加引号 —— 字段里只出现 `~@~` 的
+一部分(`~`)时并不需要引号。分隔符里含引号或换行会被直接拒绝:那种文件谁也读不回来。
 
 ### JDBC 健康监控
 
@@ -373,7 +407,7 @@ Markdown 报告,包含:
 | Cancel Running Query | 取消正在跑的查询 |
 | Select Top 200 Rows | 从树上直接预览表数据 |
 | Run Custom Action... | 在表/视图/列上跑自定义 SQL 动作 |
-| Show Query Variables | 打开参数面板 |
+| Show Query Variables | 把「SQL 脚本变量」页签切到前台 |
 | **导出** | |
 | Export Result... | 导出当前结果网格 |
 | Export Table... | 不查询,直接导出整张表 |
@@ -447,10 +481,12 @@ Markdown 报告,包含:
 
 | 设置 | 类型 | 默认 | 说明 |
 |---|---|---|---|
-| `export.csv.delimiter` | string | `","` | CSV 分隔符 |
+| `export.csv.delimiter` | string | `","` | CSV 字段分隔符;最长 8 个字符,例如 `~@~` |
+| `export.csv.quoting` | string | `"minimal"` | CSV 引号策略:`minimal`(仅必要时)/ `always` / `never` |
 | `export.csv.writeBom` | boolean | `true` | CSV 是否写 UTF-8 BOM |
 | `export.excel.maxRowsPerSheet` | number | `1048576` | xlsx 单 sheet 行数上限 |
 | `export.includeHeader` | boolean | `true` | 是否输出表头 |
+| `export.useColumnRemarks` | boolean | `true` | CSV/Excel 表头用列的注释(中文名)而非物理列名 |
 | `logLevel` | string | `"info"` | 桥日志级别 |
 
 ### DDL 与自定义动作
@@ -528,7 +564,7 @@ npm install
 ### 构建
 
 ```bash
-npm run compile         # 打包扩展与 webview → out/extension.js, media/result/main.js
+npm run compile         # 打包扩展与 webview → out/extension.js, media/*/main.js
 npm run bridge:compile  # 编译 Java 桥      → resources/bridge.jar
 npm run icon            # 重新生成扩展图标   → media/icon/icon.png
 ```
@@ -540,7 +576,7 @@ npm run icon            # 重新生成扩展图标   → media/icon/icon.png
 ### 测试
 
 ```bash
-npm test        # 类型检查 + 文档与清单一致性 + 30 项 Java 测试 + 40 项 TS 单测(无需数据库)
+npm test        # 类型检查 + 文档与清单一致性 + 50 项 Java 测试 + 114 项 TS 单测(无需数据库)
 npm run verify  # 上面全部 + 构建桥 + 冒烟检查
 ```
 
@@ -558,7 +594,8 @@ cd - && npm run smoke -- /tmp/dbclient-drivers
 这里用 Node 24 自带的 `node:sqlite` 造 fixture 库,不需要装任何数据库。
 
 `scripts/check-docs.mjs` 会校验 README 里写的设置名、命令面板标签、快捷键、视图和链接是否
-真的存在 —— 这些都是不会让构建报错、但用户一用就撞上的错误。
+真的存在,并校验 `package.nls.json` / `package.nls.zh-cn.json` 与清单里的 `%键%` 是否一一对应
+—— 这些都是不会让构建报错、但用户一用就撞上的错误。
 
 ### 内网 / 离线开发
 
@@ -602,9 +639,9 @@ src/
 ├── service/    连接、元数据、导出、历史、模板、变量
 ├── sql/        SQL 上下文分析、补全、变量替换、code lens
 ├── tree/       连接树、历史树
-├── webview/    结果网格、连接表单、变量面板
+├── webview/    结果网格、连接表单、变量视图
 ├── commands/   命令注册
-└── util/       日志、SQL 语句切分、虚拟文档
+└── util/       日志、SQL 语句切分、虚拟文档、文案目录(i18n)
 ```
 
 ---

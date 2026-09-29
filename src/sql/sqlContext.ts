@@ -27,9 +27,16 @@ export interface SqlContext {
   readonly target: CompletionTarget;
   /** Word fragment immediately before the cursor, used to filter candidates. */
   readonly prefix: string;
-  /** Qualifier from a dotted reference, e.g. the `u` in `u.na|`. */
+  /** Qualifier from a dotted reference, e.g. the `u` in `u.na|` or the `public` in `public.|`. */
   readonly qualifier?: string;
-  /** Tables named in the enclosing statement, used to scope column suggestions. */
+  /**
+   * Tables named in the enclosing statement, from both before and after the cursor.
+   *
+   * The forward half exists because of how a select list is written: `SELECT | FROM users` is far
+   * more common than typing the columns after the table, and scoping column suggestions to the
+   * statement's tables is the entire point of the feature. Only the current statement is consulted,
+   * so a table from a later statement cannot leak in.
+   */
   readonly references: readonly TableReference[];
   /** Offset where the word being completed starts, so the provider replaces exactly that word. */
   readonly replaceStart: number;
@@ -117,7 +124,13 @@ export function analyzeSqlContext(sql: string, offset: number): SqlContext {
   const clamped = Math.max(0, Math.min(offset, sql.length));
   const tokens = tokenize(sql, 0, clamped);
   const statementStart = findStatementStart(sql, clamped);
-  const references = referencedTables(sql.slice(statementStart, clamped), statementStart);
+  const statementEnd = findStatementEnd(sql, clamped);
+  const references = mergeReferences(
+    referencedTables(sql.slice(statementStart, clamped), statementStart),
+    // Looked at as well as backwards, because a select list is written before the FROM clause that
+    // determines which columns it may contain.
+    referencedTables(sql.slice(clamped, statementEnd), clamped),
+  );
 
   const last = tokens[tokens.length - 1];
 
@@ -268,6 +281,30 @@ export function referencedTables(fragment: string, baseOffset = 0): TableReferen
   return references;
 }
 
+/**
+ * Combines the references found before and after the cursor.
+ *
+ * Order matters: the provider resolves a qualifier by scanning the list, and the tables the user has
+ * already written are the more likely meaning of a short alias. Duplicates are dropped because the
+ * same table is routinely named once on each side of the cursor.
+ */
+function mergeReferences(
+  before: readonly TableReference[],
+  after: readonly TableReference[],
+): TableReference[] {
+  const seen = new Set<string>();
+  const merged: TableReference[] = [];
+  for (const reference of [...before, ...after]) {
+    const key = `${reference.name.toLowerCase()}\u0000${reference.alias?.toLowerCase() ?? ''}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    merged.push(reference);
+  }
+  return merged;
+}
+
 // ---------------------------------------------------------------------------
 // scanner
 // ---------------------------------------------------------------------------
@@ -387,6 +424,21 @@ function unquote(text: string): string {
   }
   const inner = text.slice(1, -1);
   return inner.split(last + last).join(last);
+}
+
+/**
+ * Finds the end of the statement containing an offset, for the forward scan.
+ *
+ * Stops at the first semicolon outside a literal or comment, and at the end of the document, so the
+ * lookahead can never reach into the next statement.
+ */
+function findStatementEnd(sql: string, offset: number): number {
+  for (const token of tokenize(sql, offset, sql.length)) {
+    if (token.kind === 'punct' && token.text === ';') {
+      return token.start;
+    }
+  }
+  return sql.length;
 }
 
 /**

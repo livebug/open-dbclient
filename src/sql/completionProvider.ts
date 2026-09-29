@@ -3,8 +3,9 @@ import * as vscode from 'vscode';
 import { Config } from '../constants';
 import type { ConnectionService } from '../service/ConnectionService';
 import type { SqlEditorBinding } from '../service/SqlEditorBinding';
-import type { MetadataCache, CachedColumn } from './metadataCache';
+import type { MetadataCache, CachedColumn, CachedTables } from './metadataCache';
 import { analyzeSqlContext, type SqlContext } from './sqlContext';
+import { t } from '../util/i18n';
 
 /**
  * SQL completion.
@@ -63,8 +64,16 @@ export class SqlCompletionProvider implements vscode.CompletionItemProvider, vsc
     switch (context.target) {
       case 'table':
         return [...(await this.tableItems(profile.id, range)), ...this.keywordItems(range)];
-      case 'column':
+      case 'column': {
+        // A qualifier is a schema name as often as it is a table or alias, and the two cannot be told
+        // apart from the text alone - so the schema list decides, and only a qualifier that is not a
+        // known schema falls through to "columns of that table".
+        const insideSchema = await this.qualifierItems(profile.id, context.qualifier, range);
+        if (insideSchema) {
+          return [...insideSchema, ...this.keywordItems(range)];
+        }
         return [...(await this.columnItems(profile.id, context, range)), ...this.keywordItems(range)];
+      }
       default:
         return this.keywordItems(range);
     }
@@ -81,14 +90,72 @@ export class SqlCompletionProvider implements vscode.CompletionItemProvider, vsc
       return [];
     }
 
-    return tables.names.map((name) => {
-      const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Struct);
-      item.range = range;
-      item.detail = 'table or view';
-      // Tables sort before keywords: the user asking after `FROM` almost always wants a table.
-      item.sortText = `0${name}`;
-      return item;
-    });
+    const items = tables.names.map((name) => this.tableItem(name, range, t('table or view')));
+
+    // Schemas and catalogs are offered alongside the tables, so that typing `FROM pub` finds
+    // `public` and the user can then descend into it with a dot.
+    for (const qualifier of tables.qualifiers) {
+      items.push(
+        this.tableItem(
+          qualifier.name,
+          range,
+          t('{0} · {1} table(s)', qualifier.kind === 'schema' ? t('schema') : t('catalog'), qualifier.tables.length),
+          vscode.CompletionItemKind.Module,
+        ),
+      );
+    }
+
+    return items;
+  }
+
+  /**
+   * Tables of the schema or catalog named before the dot, when the qualifier is one.
+   *
+   * Returns undefined for a qualifier that is not a known schema, which is how `users.` still means
+   * "columns of users". `public.` and `users.` are identical as text, so this distinction can only be
+   * made against the database's own schema list - and until it was made, typing a schema name and a
+   * dot offered the columns of a table that does not exist, i.e. nothing at all.
+   */
+  private async qualifierItems(
+    connectionId: string,
+    qualifier: string | undefined,
+    range: vscode.Range,
+  ): Promise<vscode.CompletionItem[] | undefined> {
+    if (!qualifier) {
+      return undefined;
+    }
+
+    await this.cache.ensureTables(connectionId);
+    const tables = this.cache.tablesFor(connectionId);
+    if (!tables) {
+      return undefined;
+    }
+
+    const needle = qualifier.toLowerCase();
+    const match = tables.qualifiers.find((candidate) => candidate.name.toLowerCase() === needle);
+    if (!match) {
+      return undefined;
+    }
+
+    // The inserted text is the bare table name: the range covers only the fragment being typed, so
+    // the qualifier the user already wrote is left alone.
+    return match.tables.map((name) =>
+      this.tableItem(name, range, t('{0}.{1}', match.name, name)),
+    );
+  }
+
+  private tableItem(
+    name: string,
+    range: vscode.Range,
+    detail: string,
+    kind: vscode.CompletionItemKind = vscode.CompletionItemKind.Struct,
+  ): vscode.CompletionItem {
+    const item = new vscode.CompletionItem(name, kind);
+    item.range = range;
+    item.detail = detail;
+    // Tables sort before keywords: the user asking after `FROM` almost always wants a table.
+    item.sortText = `0${name}`;
+    return item;
   }
 
   /**
@@ -111,6 +178,7 @@ export class SqlCompletionProvider implements vscode.CompletionItemProvider, vsc
     }
 
     const qualify = context.qualifier === undefined && targets.length > 1;
+    const known = this.cache.tablesFor(connectionId);
     const items: vscode.CompletionItem[] = [];
 
     for (const target of targets) {
@@ -119,12 +187,28 @@ export class SqlCompletionProvider implements vscode.CompletionItemProvider, vsc
         target.name,
         vscode.workspace.getConfiguration().get<number>(Config.intellisenseColumnCacheLimit, 500),
       );
+      const path = this.describeTarget(target, known);
       for (const column of columns) {
-        items.push(this.columnItem(column, target, qualify, range));
+        items.push(this.columnItem(column, target, qualify, range, path));
       }
     }
 
     return items;
+  }
+
+  /**
+   * The schema-qualified path of a table reference, for a completion's detail text.
+   *
+   * A bare name is completed with the connection's only schema when there is exactly one, because
+   * "which table is `id` from?" is the question this text exists to answer, and `users` alone does not
+   * answer it when the database has schemas.
+   */
+  private describeTarget(target: { name: string; alias?: string }, known: CachedTables | undefined): string {
+    const path =
+      target.name.includes('.') || !known?.defaultSchema
+        ? target.name
+        : `${known.defaultSchema}.${target.name}`;
+    return target.alias ? `${path} · ${target.alias}` : path;
   }
 
   private columnItem(
@@ -132,6 +216,7 @@ export class SqlCompletionProvider implements vscode.CompletionItemProvider, vsc
     target: { name: string; alias?: string },
     qualify: boolean,
     range: vscode.Range,
+    path: string,
   ): vscode.CompletionItem {
     const qualifier = target.alias ?? target.name;
     // Qualifying with the alias when there is one keeps the inserted text compilable; qualifying with
@@ -140,11 +225,11 @@ export class SqlCompletionProvider implements vscode.CompletionItemProvider, vsc
 
     const item = new vscode.CompletionItem(label, vscode.CompletionItemKind.Field);
     item.range = range;
-    item.detail = column.displayType;
+    // The table comes first and the type after it: with two tables in a join, the table is what the
+    // user needs to see to pick between two columns of the same name.
+    item.detail = `${path} · ${column.displayType}`;
     item.sortText = `0${column.name}`;
-    if (column.primaryKey) {
-      item.documentation = new vscode.MarkdownString('Primary key');
-    }
+    item.documentation = new vscode.MarkdownString(columnDocumentation(column, path));
     return item;
   }
 
@@ -188,7 +273,7 @@ export class SqlCompletionProvider implements vscode.CompletionItemProvider, vsc
     for (const [prefix, body] of Object.entries(SNIPPETS)) {
       const item = new vscode.CompletionItem(prefix, vscode.CompletionItemKind.Snippet);
       item.insertText = new vscode.SnippetString(body);
-      item.detail = 'snippet';
+      item.detail = t('snippet');
       item.range = range;
       item.sortText = `0${prefix}`;
       items.push(item);
@@ -205,8 +290,24 @@ export class SqlCompletionProvider implements vscode.CompletionItemProvider, vsc
   }
 }
 
-/** Keywords worth suggesting. Not exhaustive: a wall of noise helps nobody. */
-const SQL_KEYWORDS = [
+/**
+ * The documentation shown for a column suggestion.
+ *
+ * This is where a column's comment belongs. The grid can put it beside the header, but while writing
+ * SQL there is no header - and the comment is exactly what is needed to tell `AMT_01` from `AMT_02`.
+ */
+function columnDocumentation(column: CachedColumn, path: string): string {
+  const lines = [`**${column.name}**  `, `\`${path}\` · \`${column.displayType}\``];
+  if (column.remarks && column.remarks.trim() !== '') {
+    lines.push('', column.remarks.trim());
+  }
+  if (column.primaryKey) {
+    lines.push('', t('Primary key'));
+  }
+  return lines.join('\n');
+}
+
+/** Keywords worth suggesting. Not exhaustive: a wall of noise helps nobody. */const SQL_KEYWORDS = [
   'SELECT',
   'FROM',
   'WHERE',

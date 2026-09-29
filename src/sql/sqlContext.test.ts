@@ -119,6 +119,55 @@ test('references pick up bare aliases', () => {
   ]);
 });
 
+test('a FROM clause after the cursor still scopes the columns', () => {
+  // `SELECT | FROM users` is how a select list is actually written: the table is named after the
+  // columns, so looking only backwards left the column completion with no table to scope to and it
+  // offered nothing at all.
+  const context = analyze('SELECT | FROM users');
+  assert.equal(context.target, 'column');
+  assert.deepEqual(
+    context.references.map((reference) => reference.name),
+    ['users'],
+  );
+});
+
+test('an alias written after the cursor is picked up too', () => {
+  const context = analyze('SELECT | FROM users u JOIN orders o ON u.id = o.user_id');
+  assert.deepEqual(context.references, [
+    { name: 'users', alias: 'u' },
+    { name: 'orders', alias: 'o' },
+  ]);
+});
+
+test('the forward scan stops at the end of the statement', () => {
+  // A table from the next statement must not become a candidate for this one's columns: the two
+  // statements are unrelated, and offering `orders` here would be a guess dressed up as a suggestion.
+  const context = analyze('SELECT | FROM users; SELECT * FROM orders');
+  assert.deepEqual(
+    context.references.map((reference) => reference.name),
+    ['users'],
+  );
+});
+
+test('a table seen on both sides is listed once', () => {
+  const context = analyze('SELECT * FROM users WHERE | AND EXISTS (SELECT 1 FROM users)');
+  assert.deepEqual(context.references, [{ name: 'users' }]);
+});
+
+test('a qualifier keeps its prefix, whether it names a schema or a table', () => {
+  // The scanner cannot tell `public.` from `users.`; both are a qualifier followed by a dot. Deciding
+  // which one it is needs the database's schema list, which the completion provider has and this
+  // module does not - so the test pins what the scanner *does* promise: the qualifier and the fragment
+  // being typed, with the replacement range covering only the fragment.
+  const context = analyze('SELECT * FROM public.us|');
+  assert.equal(context.qualifier, 'public');
+  assert.equal(context.prefix, 'us');
+  assert.equal(context.target, 'column');
+  assert.equal(context.replaceStart, 'SELECT * FROM public.'.length);
+
+  assert.equal(analyze('SELECT * FROM us|').qualifier, undefined);
+});
+
 test('references pick up AS aliases', () => {
   const references = referencedTables('SELECT * FROM users AS u');
   assert.deepEqual(references, [{ name: 'users', alias: 'u' }]);

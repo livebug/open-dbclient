@@ -1,13 +1,32 @@
-import type { ColumnInfo } from '../bridge/protocol';
+import type { ColumnInfo, TableInfo } from '../bridge/protocol';
 import type { MetadataService } from '../service/MetadataService';
 import type { ConnectionService } from '../service/ConnectionService';
 import { log } from '../util/logger';
+
+/** The parts of a table listing that qualifier grouping needs. */
+type ColumnSourceTable = Pick<TableInfo, 'name' | 'schema' | 'catalog'>;
 
 /** A column offered by completion. */
 export interface CachedColumn {
   readonly name: string;
   readonly displayType: string;
   readonly primaryKey: boolean;
+  /** The column's comment, which on many schemas is the name people actually use. */
+  readonly remarks?: string;
+}
+
+/**
+ * A named container of tables, i.e. the thing before the dot in `schema.table`.
+ *
+ * Schemas and catalogs are both kept here, because from the user's side they play the same role: a
+ * qualifier whose completion should list the tables inside it. A database that has neither simply
+ * contributes nothing.
+ */
+export interface CachedQualifier {
+  readonly name: string;
+  readonly tables: readonly string[];
+  /** Shown as the completion's detail, so the two kinds can be told apart when both exist. */
+  readonly kind: 'schema' | 'catalog';
 }
 
 /** Tables grouped by the schema they live in. */
@@ -15,6 +34,8 @@ export interface CachedTables {
   readonly names: readonly string[];
   /** Schema to use when resolving a bare table name; undefined when the database has no schemas. */
   readonly defaultSchema?: string;
+  /** Schemas and catalogs, for completing the qualifier of a qualified name. */
+  readonly qualifiers: readonly CachedQualifier[];
 }
 
 /**
@@ -141,6 +162,7 @@ export class MetadataCache {
         // With exactly one schema, a bare table name is unambiguous; with several it is not, so no
         // default is offered and the completion list stays honest about what it can resolve.
         defaultSchema: schemas.length === 1 ? schemas[0] : undefined,
+        qualifiers: buildQualifiers(schemas, allTables),
       });
       log.debug(`Completion cache: ${names.length} table(s) for '${connectionId}'`);
     } catch (error) {
@@ -155,6 +177,7 @@ export class MetadataCache {
         name: column.name,
         displayType: column.displayType,
         primaryKey: column.primaryKey,
+        remarks: column.remarks,
       }));
     } catch (error) {
       // Remembered so a table the driver cannot describe is not retried on every keystroke.
@@ -184,4 +207,47 @@ export class MetadataCache {
       }
     }
   }
+}
+
+/**
+ * Groups table names under every name that can qualify them.
+ *
+ * A schema that contains no tables is kept as well: it is still worth completing, because the user
+ * may be about to create the first table in it, and a qualifier the database reports should not
+ * silently disappear from the suggestions because it happens to be empty right now.
+ */
+function buildQualifiers(
+  schemas: readonly string[],
+  tables: readonly ColumnSourceTable[],
+): CachedQualifier[] {
+  const found = new Map<string, { name: string; kind: 'schema' | 'catalog'; tables: Set<string> }>();
+
+  const remember = (name: string | undefined, kind: 'schema' | 'catalog', table?: string): void => {
+    if (!name) {
+      return;
+    }
+    const key = `${kind}\u0000${name.toLowerCase()}`;
+    let entry = found.get(key);
+    if (!entry) {
+      entry = { name, kind, tables: new Set<string>() };
+      found.set(key, entry);
+    }
+    if (table) {
+      entry.tables.add(table);
+    }
+  };
+
+  for (const schema of schemas) {
+    remember(schema, 'schema');
+  }
+  for (const table of tables) {
+    remember(table.schema, 'schema', table.name);
+    remember(table.catalog, 'catalog', table.name);
+  }
+
+  return [...found.values()].map((entry) => ({
+    name: entry.name,
+    kind: entry.kind,
+    tables: [...entry.tables],
+  }));
 }

@@ -9,6 +9,7 @@ import type {
   ProbeResult,
 } from '../bridge/protocol';
 import { describeError, log } from '../util/logger';
+import { t } from '../util/i18n';
 import type { ConnectionProfile, ConnectionState } from '../model/ConnectionProfile';
 import type { ConnectionStore } from '../model/ConnectionStore';
 
@@ -110,7 +111,9 @@ export class ConnectionService implements vscode.Disposable {
       const message = describeError(error);
       this.setState(profile.id, { status: 'error', lastError: message });
       if (report) {
-        void vscode.window.showErrorMessage(`Could not connect to '${profile.name}': ${message}`);
+        void vscode.window.showErrorMessage(
+          t("Could not connect to '{0}': {1}", profile.name, message),
+        );
       }
       throw error;
     }
@@ -157,8 +160,8 @@ export class ConnectionService implements vscode.Disposable {
   /** Asks for a password and offers to remember it. Returns undefined when the user cancels. */
   async promptForPassword(profile: ConnectionProfile): Promise<string | undefined> {
     const password = await vscode.window.showInputBox({
-      title: `Password for ${profile.name}`,
-      prompt: profile.user ? `User ${profile.user}` : undefined,
+      title: t('Password for {0}', profile.name),
+      prompt: profile.user ? t('User {0}', profile.user) : undefined,
       password: true,
       ignoreFocusOut: true,
     });
@@ -168,11 +171,11 @@ export class ConnectionService implements vscode.Disposable {
 
     // Only offer to save when the profile is one that would read it back.
     if (profile.savePassword && !(await this.store.getPassword(profile.id))) {
-      const answer = await vscode.window.showQuickPick(['Remember', 'Do not remember'], {
-        title: 'Remember this password?',
-        placeHolder: 'Stored in the operating system keychain',
+      const answer = await vscode.window.showQuickPick([t('Remember'), t('Do not remember')], {
+        title: t('Remember this password?'),
+        placeHolder: t('Stored in the operating system keychain'),
       });
-      if (answer === 'Remember') {
+      if (answer === t('Remember')) {
         await this.store.setPassword(profile.id, password);
       }
     }
@@ -195,7 +198,7 @@ export class ConnectionService implements vscode.Disposable {
       // confusing "password authentication failed" for a password the user never entered.
       throw new ConnectionFailedError(
         profile.id,
-        `A password is required for '${profile.name}'.`,
+        t("A password is required for '{0}'.", profile.name),
         true,
       );
     }

@@ -5,6 +5,7 @@ import type { ConnectionProfile, ConnectionProfileDraft } from '../model/Connect
 import { profileLabel } from '../model/ConnectionProfile';
 import { ConnectionFormPanel, valuesFor } from '../webview/ConnectionFormPanel';
 import type { DatabaseTreeNode } from '../tree/nodeTypes';
+import { t } from '../util/i18n';
 import { describeError, log } from '../util/logger';
 import type { CommandDependencies } from './types';
 
@@ -61,14 +62,14 @@ async function openConnectionForm(
   const drivers = dependencies.drivers.list();
   if (drivers.length === 0) {
     const action = await vscode.window.showWarningMessage(
-      'No JDBC driver is loaded. A driver jar is needed before a connection can be created.',
-      'Add Driver Jar…',
-      'Open Driver Folder',
+      t('No JDBC driver is loaded. A driver jar is needed before a connection can be created.'),
+      t('Add Driver Jar…'),
+      t('Open Driver Folder'),
     );
-    if (action === 'Add Driver Jar…') {
+    if (action === t('Add Driver Jar…')) {
       await dependencies.drivers.addJars();
       await setDriverContext(dependencies);
-    } else if (action === 'Open Driver Folder') {
+    } else if (action === t('Open Driver Folder')) {
       await dependencies.drivers.openFolder();
     }
     return undefined;
@@ -129,10 +130,10 @@ async function addConnection(dependencies: CommandDependencies): Promise<void> {
   dependencies.tree.refresh();
 
   const chosen = await vscode.window.showInformationMessage(
-    `Saved connection '${profileLabel(profile)}'.`,
-    'Connect',
+    t("Saved connection '{0}'.", profileLabel(profile)),
+    t('Connect'),
   );
-  if (chosen === 'Connect') {
+  if (chosen === t('Connect')) {
     await runConnect(dependencies, profile);
   }
 }
@@ -169,7 +170,7 @@ async function duplicateConnection(
   }
 
   const copy = await dependencies.store.add({
-    name: `${node.profile.name} copy`,
+    name: t('{0} copy', node.profile.name),
     driverClassName: node.profile.driverClassName,
     url: node.profile.url,
     user: node.profile.user,
@@ -195,11 +196,14 @@ async function deleteConnection(
   }
 
   const confirmed = await vscode.window.showWarningMessage(
-    `Delete the saved connection '${profileLabel(node.profile)}'? The database itself is not affected.`,
+    t(
+      "Delete the saved connection '{0}'? The database itself is not affected.",
+      profileLabel(node.profile),
+    ),
     { modal: true },
-    'Delete',
+    t('Delete'),
   );
-  if (confirmed !== 'Delete') {
+  if (confirmed !== t('Delete')) {
     return;
   }
 
@@ -223,16 +227,16 @@ async function testConnection(
   await vscode.window.withProgress(
     {
       location: vscode.ProgressLocation.Notification,
-      title: `Connecting to ${profileLabel(node.profile)}`,
+      title: t('Connecting to {0}', profileLabel(node.profile)),
     },
     async () => {
       try {
         const result = await dependencies.connections.test(node.profile, password);
         void vscode.window.showInformationMessage(
-          `Connected in ${result.connectMillis} ms. ${result.capabilities.description}`,
+          t('Connected in {0} ms. {1}', result.connectMillis, result.capabilities.description),
         );
       } catch (error) {
-        void vscode.window.showErrorMessage(`Connection failed: ${describeError(error)}`);
+        void vscode.window.showErrorMessage(t('Connection failed: {0}', describeError(error)));
       }
     },
   );
@@ -254,12 +258,12 @@ async function runConnect(
   profile: ConnectionProfile,
 ): Promise<void> {
   await vscode.window.withProgress(
-    { location: vscode.ProgressLocation.Notification, title: `Connecting to ${profileLabel(profile)}` },
+    { location: vscode.ProgressLocation.Notification, title: t('Connecting to {0}', profileLabel(profile)) },
     async () => {
       try {
         const result = await dependencies.connections.connect(profile);
         void vscode.window.showInformationMessage(
-          `Connected to ${result.capabilities.description} in ${result.connectMillis} ms.`,
+          t('Connected to {0} in {1} ms.', result.capabilities.description, result.connectMillis),
         );
       } catch {
         // connections.connect already reported the failure to the user.
@@ -289,7 +293,7 @@ async function disconnect(
 async function selectConnectionForActiveEditor(dependencies: CommandDependencies): Promise<void> {
   const editor = vscode.window.activeTextEditor;
   if (!editor || editor.document.languageId !== 'sql') {
-    void vscode.window.showInformationMessage('Open a SQL file first.');
+    void vscode.window.showInformationMessage(t('Open a SQL file first.'));
     return;
   }
 
@@ -299,13 +303,13 @@ async function selectConnectionForActiveEditor(dependencies: CommandDependencies
     profile,
   }));
   if (options.length === 0) {
-    void vscode.window.showInformationMessage('No saved connections yet.');
+    void vscode.window.showInformationMessage(t('No saved connections yet.'));
     return;
   }
 
   const picked = await vscode.window.showQuickPick(options, {
-    title: 'Attach this file to a connection',
-    placeHolder: 'The choice is written into the file as a comment',
+    title: t('Attach this file to a connection'),
+    placeHolder: t('The choice is written into the file as a comment'),
   });
   if (picked) {
     await dependencies.binding.bind(editor.document, picked.profile);
@@ -328,10 +332,10 @@ async function copyName(node: DatabaseTreeNode | undefined): Promise<void> {
  */
 async function filterTree(dependencies: CommandDependencies): Promise<void> {
   const value = await vscode.window.showInputBox({
-    title: 'Filter tables, views and columns',
-    prompt: 'Show only names containing this text. Leave empty to clear.',
+    title: t('Filter tables, views and columns'),
+    prompt: t('Show only names containing this text. Leave empty to clear.'),
     value: dependencies.tree.activeFilter,
-    placeHolder: 'e.g. order',
+    placeHolder: t('e.g. order'),
   });
   if (value === undefined) {
     return;

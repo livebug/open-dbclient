@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 
 import type { QueryHistoryEntry, QueryHistoryStore } from '../service/QueryHistoryStore';
+import { t } from '../util/i18n';
 
 /**
  * A node in the query history view.
@@ -47,10 +48,14 @@ export class HistoryTreeProvider implements vscode.TreeDataProvider<HistoryNode>
     tooltip.appendMarkdown(`**${escapeMarkdown(entry.connectionName)}** · ${relativeTime(entry.executedAt)}\n\n`);
     if (entry.succeeded) {
       tooltip.appendMarkdown(
-        entry.rowCount === undefined ? 'Completed\n\n' : `${entry.rowCount.toLocaleString()} row(s)\n\n`,
+        entry.rowCount === undefined
+          ? `${t('Completed')}\n\n`
+          : `${t('{0} row(s)', entry.rowCount.toLocaleString())}\n\n`,
       );
     } else {
-      tooltip.appendMarkdown(`Failed: ${escapeMarkdown(entry.errorMessage ?? 'unknown error')}\n\n`);
+      tooltip.appendMarkdown(
+        `${t('Failed: {0}', escapeMarkdown(entry.errorMessage ?? t('unknown error')))}\n\n`,
+      );
     }
     tooltip.appendCodeblock(entry.sql, 'sql');
     item.tooltip = tooltip;
@@ -75,17 +80,17 @@ export class HistoryTreeProvider implements vscode.TreeDataProvider<HistoryNode>
 function relativeTime(timestamp: number): string {
   const seconds = Math.round((Date.now() - timestamp) / 1000);
   if (seconds < 60) {
-    return 'just now';
+    return t('just now');
   }
   const minutes = Math.round(seconds / 60);
   if (minutes < 60) {
-    return `${minutes} min ago`;
+    return t('{0} min ago', minutes);
   }
   const hours = Math.round(minutes / 60);
   if (hours < 24) {
-    return `${hours} h ago`;
+    return t('{0} h ago', hours);
   }
-  return `${Math.round(hours / 24)} d ago`;
+  return t('{0} d ago', Math.round(hours / 24));
 }
 
 function escapeMarkdown(text: string): string {

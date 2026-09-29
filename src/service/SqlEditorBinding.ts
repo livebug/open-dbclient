@@ -3,6 +3,7 @@ import * as vscode from 'vscode';
 import { CONNECTION_DIRECTIVE, ContextKeys, connectionDirective } from '../constants';
 import { profileLabel, type ConnectionProfile } from '../model/ConnectionProfile';
 import type { ConnectionStore } from '../model/ConnectionStore';
+import { t } from '../util/i18n';
 import { log } from '../util/logger';
 
 /**
@@ -128,18 +129,19 @@ export class SqlEditorBinding implements vscode.Disposable {
     if (profile) {
       this.statusBar.text = `$(database) ${profileLabel(profile)}`;
       this.statusBar.tooltip = new vscode.MarkdownString(
-        `Queries run against **${profileLabel(profile)}**\n\n` +
-          `\`${profile.driverClassName}\`\n\n${profile.url}\n\nClick to change.`,
+        t('Queries run against **{0}**', profileLabel(profile)) +
+          `\n\n\`${profile.driverClassName}\`\n\n${profile.url}\n\n` +
+          t('Click to change.'),
       );
       this.statusBar.show();
       return;
     }
 
     const directive = this.directiveText(editor.document);
-    this.statusBar.text = '$(database) No connection';
+    this.statusBar.text = `$(database) ${t('No connection')}`;
     this.statusBar.tooltip = directive
-      ? `The directive names '${directive}', which is not a saved connection.`
-      : 'Click to attach this file to a connection.';
+      ? t("The directive names '{0}', which is not a saved connection.", directive)
+      : t('Click to attach this file to a connection.');
     this.statusBar.show();
   }
 

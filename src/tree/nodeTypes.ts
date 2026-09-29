@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 
 import type { ColumnInfo, IndexInfo, TableInfo } from '../bridge/protocol';
 import type { ConnectionProfile } from '../model/ConnectionProfile';
+import { t } from '../util/i18n';
 
 /**
  * The nodes the database tree can show.
@@ -163,9 +164,9 @@ export function nodeLabel(node: DatabaseTreeNode): string {
     case 'column':
       return node.column.name;
     case 'index':
-      return node.index.name || '(unnamed index)';
+      return node.index.name || t('(unnamed index)');
     default:
-      return 'unknown';
+      return t('unknown');
   }
 }
 
@@ -181,7 +182,7 @@ export function nodeDescription(node: DatabaseTreeNode): string | undefined {
     case 'column':
       return columnDescription(node.column);
     case 'index':
-      return node.index.unique ? 'unique' : undefined;
+      return node.index.unique ? t('unique') : undefined;
     default:
       return undefined;
   }
@@ -206,24 +207,24 @@ export function nodeTooltip(node: DatabaseTreeNode): vscode.MarkdownString | und
     }
     case 'column':
       tooltip.appendMarkdown(`**${escapeMarkdown(node.column.name)}**\n\n`);
-      tooltip.appendMarkdown(`Type: \`${escapeMarkdown(node.column.typeName)}\``);
+      tooltip.appendMarkdown(t('Type: `{0}`', escapeMarkdown(node.column.typeName)));
       if (node.column.nullable) {
-        tooltip.appendMarkdown(` · nullable`);
+        tooltip.appendMarkdown(t(' · nullable'));
       }
       if (node.column.defaultValue) {
-        tooltip.appendMarkdown(` · default \`${escapeMarkdown(node.column.defaultValue)}\``);
+        tooltip.appendMarkdown(t(' · default `{0}`', escapeMarkdown(node.column.defaultValue)));
       }
       if (node.column.remarks) {
         tooltip.appendMarkdown(`\n\n${escapeMarkdown(node.column.remarks)}`);
       }
       return tooltip;
     case 'index':
-      tooltip.appendMarkdown(`**${escapeMarkdown(node.index.name || '(unnamed index)')}**\n\n`);
+      tooltip.appendMarkdown(`**${escapeMarkdown(node.index.name || t('(unnamed index)'))}**\n\n`);
       tooltip.appendMarkdown(
-        `${node.index.unique ? 'Unique' : 'Non-unique'} · ${escapeMarkdown(node.index.typeName)}`,
+        `${node.index.unique ? t('Unique') : t('Non-unique')} · ${escapeMarkdown(node.index.typeName)}`,
       );
       if (node.index.columnName) {
-        tooltip.appendMarkdown(`\n\nColumn: \`${escapeMarkdown(node.index.columnName)}\``);
+        tooltip.appendMarkdown(`\n\n${t('Column: `{0}`', escapeMarkdown(node.index.columnName))}`);
       }
       return tooltip;
     default:
@@ -294,13 +295,13 @@ function isPlainType(kind: 'table' | 'view', type: string): boolean {
 function columnDescription(column: ColumnInfo): string {
   const parts: string[] = [column.displayType];
   if (column.primaryKey) {
-    parts.push('PK');
+    parts.push(t('PK'));
   }
   if (column.nullableKnown && !column.nullable) {
-    parts.push('not null');
+    parts.push(t('not null'));
   }
   if (column.autoIncrement) {
-    parts.push('auto');
+    parts.push(t('auto'));
   }
   return parts.join(' · ');
 }
@@ -308,11 +309,11 @@ function columnDescription(column: ColumnInfo): string {
 function folderLabel(folder: FolderNode['folder']): string {
   switch (folder) {
     case 'tables':
-      return 'Tables';
+      return t('Tables');
     case 'views':
-      return 'Views';
+      return t('Views');
     case 'indexes':
-      return 'Indexes';
+      return t('Indexes');
   }
 }
 

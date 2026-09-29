@@ -5,6 +5,7 @@ import type { ConnectionProfile } from '../model/ConnectionProfile';
 import type { ConnectionStore } from '../model/ConnectionStore';
 import type { ConnectionService } from '../service/ConnectionService';
 import type { MetadataService } from '../service/MetadataService';
+import { t } from '../util/i18n';
 import { log } from '../util/logger';
 import {
   nodeCollapsibleState,
@@ -94,7 +95,7 @@ export class DatabaseTreeProvider
 
   private updateViewDescription(): void {
     if (this.view) {
-      this.view.description = this.nameFilter ? `filter: ${this.nameFilter}` : undefined;
+      this.view.description = this.nameFilter ? t('filter: {0}', this.nameFilter) : undefined;
     }
   }
 
@@ -126,7 +127,7 @@ export class DatabaseTreeProvider
     if (node.kind === 'connection' && !node.connected) {
       item.command = {
         command: Commands.connect,
-        title: 'Connect',
+        title: t('Connect'),
         arguments: [node],
       };
     }

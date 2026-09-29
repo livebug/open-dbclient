@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import * as vscode from 'vscode';
 
 import { Config } from '../constants';
+import { t } from '../util/i18n';
 import { describeError, log } from '../util/logger';
 import { locateJava } from './JavaLocator';
 import { Events, Methods } from './protocol';
@@ -102,7 +103,7 @@ export class JdbcBridge implements vscode.Disposable {
       return;
     }
     if (this.disposed) {
-      throw new BridgeStoppedError('The extension is shutting down.');
+      throw new BridgeStoppedError(t('The extension is shutting down.'));
     }
     this.startPromise ??= this.start().finally(() => {
       this.startPromise = undefined;
@@ -206,7 +207,7 @@ export class JdbcBridge implements vscode.Disposable {
       child = spawn(java.executable, args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
     } catch (error) {
       this.setState('failed');
-      throw new Error(`Could not start Java at '${java.executable}': ${describeError(error)}`);
+      throw new Error(t("Could not start Java at '{0}': {1}", java.executable, describeError(error)));
     }
 
     this.child = child;
@@ -273,7 +274,15 @@ export class JdbcBridge implements vscode.Disposable {
       };
 
       timer = setTimeout(() => {
-        finish(new Error(`The JDBC bridge did not become ready within ${READY_TIMEOUT_MS} ms.${this.stderrHint()}`));
+        finish(
+          new Error(
+            t(
+              'The JDBC bridge did not become ready within {0} ms.{1}',
+              READY_TIMEOUT_MS,
+              this.stderrHint(),
+            ),
+          ),
+        );
       }, READY_TIMEOUT_MS);
 
       subscription = channel.onEvent((event) => {
@@ -286,7 +295,11 @@ export class JdbcBridge implements vscode.Disposable {
       child.once('exit', (code) => {
         finish(
           new Error(
-            `The JDBC bridge exited with code ${code ?? 'null'} before it was ready.${this.stderrHint()}`,
+            t(
+              'The JDBC bridge exited with code {0} before it was ready.{1}',
+              code ?? 'null',
+              this.stderrHint(),
+            ),
           ),
         );
       });
@@ -334,7 +347,7 @@ export class JdbcBridge implements vscode.Disposable {
   }
 
   private teardownProcess(): void {
-    this.channel?.dispose(new BridgeStoppedError('The JDBC bridge stopped.'));
+    this.channel?.dispose(new BridgeStoppedError(t('The JDBC bridge stopped.')));
     this.channel = undefined;
 
     const child = this.child;
@@ -414,7 +427,7 @@ export class JdbcBridge implements vscode.Disposable {
       return '';
     }
     const tail = this.stderrTail.slice(-8).join('\n    ');
-    return `\n  Recent output from the bridge:\n    ${tail}`;
+    return `\n  ${t('Recent output from the bridge:')}\n    ${tail}`;
   }
 
   private setState(next: BridgeState): void {
@@ -430,8 +443,10 @@ export class JdbcBridge implements vscode.Disposable {
     const jarPath = vscode.Uri.joinPath(this.context.extensionUri, 'resources', 'bridge.jar').fsPath;
     if (!existsSync(jarPath)) {
       throw new Error(
-        `The JDBC bridge is missing from this installation (expected at ${jarPath}). ` +
-          'Reinstall the extension, or run "npm run bridge:compile" in a development checkout.',
+        t(
+          'The JDBC bridge is missing from this installation (expected at {0}). Reinstall the extension, or run "npm run bridge:compile" in a development checkout.',
+          jarPath,
+        ),
       );
     }
     return jarPath;

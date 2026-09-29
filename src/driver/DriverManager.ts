@@ -7,6 +7,7 @@ import { Config } from '../constants';
 import { Methods } from '../bridge/protocol';
 import type { DriverFailure, DriverInfo, DriverRegistrationResult } from '../bridge/protocol';
 import type { JdbcBridge } from '../bridge/JdbcBridge';
+import { t } from '../util/i18n';
 import { describeError, log } from '../util/logger';
 
 /** Where Maven Central lives. Drivers are fetched from here on request. */
@@ -170,7 +171,7 @@ export class DriverManager implements vscode.Disposable {
     const opened = await vscode.env.openExternal(vscode.Uri.file(folder));
     if (!opened) {
       // Headless and remote sessions have no file manager; surfacing the path is the fallback.
-      await vscode.window.showInformationMessage(`The JDBC driver folder is at ${folder}`);
+      await vscode.window.showInformationMessage(t('The JDBC driver folder is at {0}', folder));
     }
   }
 
@@ -185,8 +186,8 @@ export class DriverManager implements vscode.Disposable {
       canSelectMany: true,
       canSelectFiles: true,
       canSelectFolders: false,
-      openLabel: 'Add JDBC driver',
-      filters: { 'JDBC driver jar': ['jar'] },
+      openLabel: t('Add JDBC driver'),
+      filters: { [t('JDBC driver jar')]: ['jar'] },
     });
     if (!selection || selection.length === 0) {
       return [];
@@ -200,11 +201,11 @@ export class DriverManager implements vscode.Disposable {
       try {
         if (await isFile(target)) {
           const answer = await vscode.window.showWarningMessage(
-            `${basename(target)} is already in the driver folder. Replace it?`,
+            t('{0} is already in the driver folder. Replace it?', basename(target)),
             { modal: true },
-            'Replace',
+            t('Replace'),
           );
-          if (answer !== 'Replace') {
+          if (answer !== t('Replace')) {
             continue;
           }
         }
@@ -214,7 +215,7 @@ export class DriverManager implements vscode.Disposable {
       } catch (error) {
         log.error(error, `Could not copy ${uri.fsPath}`);
         void vscode.window.showErrorMessage(
-          `Could not copy ${basename(uri.fsPath)}: ${describeError(error)}`,
+          t('Could not copy {0}: {1}', basename(uri.fsPath), describeError(error)),
         );
       }
     }
@@ -237,8 +238,8 @@ export class DriverManager implements vscode.Disposable {
    */
   async downloadDriver(): Promise<DriverInfo[]> {
     const coordinates = await vscode.window.showInputBox({
-      title: 'Download a JDBC driver from Maven Central',
-      prompt: 'Coordinates as groupId:artifactId:version. Separate several with spaces or commas.',
+      title: t('Download a JDBC driver from Maven Central'),
+      prompt: t('Coordinates as groupId:artifactId:version. Separate several with spaces or commas.'),
       placeHolder: 'org.postgresql:postgresql:42.7.4',
       validateInput: validateCoordinates,
     });
@@ -255,7 +256,7 @@ export class DriverManager implements vscode.Disposable {
     const downloaded: string[] = [];
 
     await vscode.window.withProgress(
-      { location: vscode.ProgressLocation.Notification, title: 'Downloading JDBC driver' },
+      { location: vscode.ProgressLocation.Notification, title: t('Downloading JDBC driver') },
       async (progress) => {
         for (const request of requests) {
           const [group, artifact, version] = request.split(':');
@@ -266,7 +267,9 @@ export class DriverManager implements vscode.Disposable {
           try {
             const response = await fetch(url);
             if (!response.ok) {
-              throw new Error(`Maven Central responded with ${response.status} ${response.statusText}`);
+              throw new Error(
+                t('Maven Central responded with {0} {1}', response.status, response.statusText),
+              );
             }
             const bytes = new Uint8Array(await response.arrayBuffer());
             const target = join(folder, fileName);
@@ -275,7 +278,9 @@ export class DriverManager implements vscode.Disposable {
             log.info(`Downloaded ${fileName} (${(bytes.length / 1024).toFixed(0)} KiB) from ${url}`);
           } catch (error) {
             log.error(error, `Could not download ${request}`);
-            void vscode.window.showErrorMessage(`Could not download ${request}: ${describeError(error)}`);
+            void vscode.window.showErrorMessage(
+              t('Could not download {0}: {1}', request, describeError(error)),
+            );
           }
         }
       },
@@ -292,8 +297,11 @@ export class DriverManager implements vscode.Disposable {
     for (const failure of result.failures ?? []) {
       if (downloaded.some((jar) => jar === failure.jar)) {
         void vscode.window.showWarningMessage(
-          `${basename(failure.jar ?? '')} downloaded but its driver could not load: ${failure.message}. ` +
-            'The driver may need additional jars, which can be added with the same download command.',
+          t(
+            '{0} downloaded but its driver could not load: {1}. The driver may need additional jars, which can be added with the same download command.',
+            basename(failure.jar ?? ''),
+            failure.message,
+          ),
         );
       }
     }
@@ -346,15 +354,15 @@ async function isFile(path: string): Promise<boolean> {
 function validateCoordinates(value: string): string | undefined {
   const trimmed = value.trim();
   if (!trimmed) {
-    return 'Enter at least one groupId:artifactId:version';
+    return t('Enter at least one groupId:artifactId:version');
   }
   for (const entry of trimmed.split(/[\s,]+/)) {
     const parts = entry.split(':');
     if (parts.length !== 3 || parts.some((part) => part.trim().length === 0)) {
-      return `'${entry}' is not groupId:artifactId:version`;
+      return t("'{0}' is not groupId:artifactId:version", entry);
     }
     if (entry.includes('..') || entry.includes('/') || entry.includes('\\')) {
-      return `'${entry}' contains characters that are not valid in Maven coordinates`;
+      return t("'{0}' contains characters that are not valid in Maven coordinates", entry);
     }
   }
   return undefined;

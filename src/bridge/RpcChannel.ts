@@ -1,6 +1,7 @@
 import type { Disposable } from 'vscode';
 
 import { log } from '../util/logger';
+import { t } from '../util/i18n';
 import { NdjsonFramer } from './NdjsonFramer';
 
 /**
@@ -201,7 +202,7 @@ export class RpcError extends Error {
 
 /** Raised when a request cannot be sent because the bridge is not running. */
 export class BridgeStoppedError extends Error {
-  constructor(message = 'The JDBC bridge is not running.') {
+  constructor(message = t('The JDBC bridge is not running.')) {
     super(message);
     this.name = 'BridgeStoppedError';
   }

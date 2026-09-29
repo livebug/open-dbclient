@@ -6,6 +6,7 @@ import type { JdbcBridge } from '../bridge/JdbcBridge';
 import type { HealthSnapshot } from '../bridge/protocol';
 import { formatUptime } from '../bridge/protocol';
 import { describeError, log } from '../util/logger';
+import { t } from '../util/i18n';
 import type { VirtualDocumentProvider } from '../util/VirtualDocuments';
 
 /** Fraction of the heap in use above which the status bar starts warning. */
@@ -105,7 +106,9 @@ export class HealthMonitor implements vscode.Disposable {
       try {
         snapshot = await this.bridge.request<HealthSnapshot>(Methods.healthSnapshot);
       } catch (error) {
-        void vscode.window.showErrorMessage(`Could not read bridge health: ${describeError(error)}`);
+        void vscode.window.showErrorMessage(
+          t('Could not read bridge health: {0}', describeError(error)),
+        );
         return;
       }
     }
@@ -128,13 +131,18 @@ export class HealthMonitor implements vscode.Disposable {
       return;
     }
 
-    const { memory, connectionCount, queries } = this.latest;
+    const { memory, poolSummaries } = this.latest;
+    // `connectionCount` is absent from the periodic push payload, which is deliberately smaller than a
+    // full snapshot. Reading it straight through printed "undefined conn" in the status bar; the pool
+    // summaries carried in every push answer the same question, so they are the fallback.
+    const connectionCount = this.latest.connectionCount ?? poolSummaries?.length ?? 0;
     const heap = Math.round(memory.heapUsedPercent);
     const warn = heap >= HEAP_WARNING_PERCENT;
 
-    this.statusBar.text = `$(pulse) ${heap}% heap · ${connectionCount} conn`;
+    const { queries } = this.latest;
+    this.statusBar.text = `$(pulse) ${t('{0}% heap · {1} conn', heap, connectionCount)}`;
     if (queries.running > 0) {
-      this.statusBar.text += ` · ${queries.running} running`;
+      this.statusBar.text += t(' · {0} running', queries.running);
     }
     this.statusBar.color = warn
       ? new vscode.ThemeColor('statusBarItem.warningForeground')
@@ -150,16 +158,25 @@ export class HealthMonitor implements vscode.Disposable {
 function renderTooltip(snapshot: HealthSnapshot): string {
   const { memory, garbageCollector, threads, cache, queries } = snapshot;
   return [
-    `**JDBC bridge** — up ${formatUptime(snapshot.uptimeMillis)}`,
+    t('**JDBC bridge** — up {0}', formatUptime(snapshot.uptimeMillis)),
     '',
-    `Heap: ${formatBytes(memory.heapUsed)} of ${formatBytes(memory.heapMax)} (${memory.heapUsedPercent.toFixed(1)}%)`,
-    `Metaspace: ${formatBytes(memory.metaspaceUsed)}`,
-    `GC: ${garbageCollector.collections} run(s), ${garbageCollector.collectionTimePercent.toFixed(1)}% of uptime`,
-    `Threads: ${threads.count} (peak ${threads.peak})`,
-    `Result cache: ${formatBytes(cache.cachedBytes)} in ${cache.storedResults} result(s)`,
-    `Queries: ${queries.completed} done, ${queries.failed} failed`,
+    t(
+      'Heap: {0} of {1} ({2}%)',
+      formatBytes(memory.heapUsed),
+      formatBytes(memory.heapMax),
+      memory.heapUsedPercent.toFixed(1),
+    ),
+    t('Metaspace: {0}', formatBytes(memory.metaspaceUsed)),
+    t(
+      'GC: {0} run(s), {1}% of uptime',
+      garbageCollector.collections,
+      garbageCollector.collectionTimePercent.toFixed(1),
+    ),
+    t('Threads: {0} (peak {1})', threads.count, threads.peak),
+    t('Result cache: {0} in {1} result(s)', formatBytes(cache.cachedBytes), cache.storedResults),
+    t('Queries: {0} done, {1} failed', queries.completed, queries.failed),
     '',
-    '_Click for the full report._',
+    t('_Click for the full report._'),
   ].join('\n');
 }
 
@@ -173,53 +190,63 @@ function renderReport(snapshot: HealthSnapshot): string {
   const { memory, garbageCollector, threads, server, cache, queries, poolSummaries } = snapshot;
 
   const lines: string[] = [
-    '# JDBC bridge health',
+    `# ${t('JDBC bridge health')}`,
     '',
-    `Captured ${new Date(snapshot.timestamp).toLocaleString()} · up ${formatUptime(snapshot.uptimeMillis)}`,
+    t('Captured {0} · up {1}', new Date(snapshot.timestamp).toLocaleString(), formatUptime(snapshot.uptimeMillis)),
     '',
-    '> These figures describe the bridge process and its JDBC layer only. Database-side counters are',
-    '> not included, because reaching them would require vendor-specific SQL.',
+    t('> These figures describe the bridge process and its JDBC layer only. Database-side counters'),
+    t('> are not included, because reaching them would require vendor-specific SQL.'),
     '',
-    '## Memory',
+    `## ${t('Memory')}`,
     '',
-    '| Measure | Value |',
-    '| --- | --- |',
-    `| Heap used | ${formatBytes(memory.heapUsed)} |`,
-    `| Heap committed | ${formatBytes(memory.heapCommitted)} |`,
-    `| Heap maximum | ${formatBytes(memory.heapMax)} |`,
-    `| Heap used | ${memory.heapUsedPercent.toFixed(1)}% |`,
-    `| Non-heap used | ${formatBytes(memory.nonHeapUsed)} |`,
-    `| Metaspace | ${formatBytes(memory.metaspaceUsed)} |`,
+    t('| Measure | Value |'),
+    t('| --- | --- |'),
+    `| ${t('Heap used')} | ${formatBytes(memory.heapUsed)} |`,
+    `| ${t('Heap committed')} | ${formatBytes(memory.heapCommitted)} |`,
+    `| ${t('Heap maximum')} | ${formatBytes(memory.heapMax)} |`,
+    `| ${t('Heap used (%)')} | ${memory.heapUsedPercent.toFixed(1)}% |`,
+    `| ${t('Non-heap used')} | ${formatBytes(memory.nonHeapUsed)} |`,
+    `| ${t('Metaspace')} | ${formatBytes(memory.metaspaceUsed)} |`,
     '',
-    '## Garbage collection',
+    `## ${t('Garbage collection')}`,
     '',
-    `Collections: **${garbageCollector.collections}** · total time: **${garbageCollector.collectionTimeMillis} ms** ` +
-      `(**${garbageCollector.collectionTimePercent.toFixed(1)}%** of uptime)`,
+    t(
+      'Collections: **{0}** · total time: **{1} ms** (**{2}%** of uptime)',
+      garbageCollector.collections,
+      garbageCollector.collectionTimeMillis,
+      garbageCollector.collectionTimePercent.toFixed(1),
+    ),
     '',
-    '| Collector | Collections | Time (ms) |',
-    '| --- | ---: | ---: |',
+    t('| Collector | Collections | Time (ms) |'),
+    t('| --- | ---: | ---: |'),
     ...garbageCollector.collectors.map(
       (collector) => `| ${collector.name} | ${collector.collections} | ${collector.collectionTimeMillis} |`,
     ),
     '',
-    '## Threads',
+    `## ${t('Threads')}`,
     '',
-    `Current **${threads.count}** · peak **${threads.peak}** · daemon **${threads.daemon}**`,
+    t('Current **{0}** · peak **{1}** · daemon **{2}**', threads.count, threads.peak, threads.daemon),
     '',
-    '## Protocol',
+    `## ${t('Protocol')}`,
     '',
-    `Handled **${server.requestsHandled}** · failed **${server.requestFailures}** · in flight **${server.activeRequests}** · handlers **${server.handlers}**`,
+    t(
+      'Handled **{0}** · failed **{1}** · in flight **{2}** · handlers **{3}**',
+      server.requestsHandled,
+      server.requestFailures,
+      server.activeRequests,
+      server.handlers,
+    ),
     '',
-    '## Connections',
+    `## ${t('Connections')}`,
     '',
   ];
 
   if (poolSummaries.length === 0) {
-    lines.push('_No connections are open._', '');
+    lines.push(t('_No connections are open._'), '');
   } else {
     lines.push(
-      '| Connection | Active | Idle | Total | Max | Waiting | Timeouts | Avg wait (ms) |',
-      '| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |',
+      t('| Connection | Active | Idle | Total | Max | Waiting | Timeouts | Avg wait (ms) |'),
+      t('| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |'),
       ...poolSummaries.map(
         (pool) =>
           `| ${pool.connectionId} | ${pool.active} | ${pool.idle} | ${pool.total} | ${pool.maxSize} | ` +
@@ -230,17 +257,22 @@ function renderReport(snapshot: HealthSnapshot): string {
   }
 
   lines.push(
-    '## Result cache',
+    `## ${t('Result cache')}`,
     '',
-    `**${cache.storedResults}** result(s) holding **${formatBytes(cache.cachedBytes)}** of a ${formatBytes(cache.maxCacheBytes)} budget.`,
-    'Least-recently-used results are discarded when the budget is exceeded.',
+    t(
+      '**{0}** result(s) holding **{1}** of a {2} budget.',
+      cache.storedResults,
+      formatBytes(cache.cachedBytes),
+      formatBytes(cache.maxCacheBytes),
+    ),
+    t('Least-recently-used results are discarded when the budget is exceeded.'),
     '',
   );
 
   if (cache.results.length > 0) {
     lines.push(
-      '| Query | Connection | Rows | Size | Columns | Age | Idle |',
-      '| --- | --- | ---: | ---: | ---: | ---: | ---: |',
+      t('| Query | Connection | Rows | Size | Columns | Age | Idle |'),
+      t('| --- | --- | ---: | ---: | ---: | ---: | ---: |'),
       ...cache.results.map(
         (result) =>
           `| ${result.queryId} | ${result.connectionId ?? '-'} | ${result.rows.toLocaleString()} | ` +
@@ -252,16 +284,22 @@ function renderReport(snapshot: HealthSnapshot): string {
   }
 
   lines.push(
-    '## Queries',
+    `## ${t('Queries')}`,
     '',
-    `Running **${queries.running}** · completed **${queries.completed}** · failed **${queries.failed}** · cancelled **${queries.cancelled}**`,
+    t(
+      'Running **{0}** · completed **{1}** · failed **{2}** · cancelled **{3}**',
+      queries.running,
+      queries.completed,
+      queries.failed,
+      queries.cancelled,
+    ),
     '',
-    `Average duration **${queries.averageMillis} ms** · slowest **${queries.slowestMillis} ms**`,
+    t('Average duration **{0} ms** · slowest **{1} ms**', queries.averageMillis, queries.slowestMillis),
     '',
   );
 
   if (queries.slowestQuery) {
-    lines.push('Slowest statement:', '', '```sql', queries.slowestQuery, '```', '');
+    lines.push(t('Slowest statement:'), '', '```sql', queries.slowestQuery, '```', '');
   }
 
   return lines.join('\n');

@@ -4,6 +4,7 @@ import { promisify } from 'node:util';
 import * as vscode from 'vscode';
 
 import { Config, MINIMUM_JAVA_VERSION } from '../constants';
+import { t } from '../util/i18n';
 import { describeError, log } from '../util/logger';
 
 const execFileAsync = promisify(execFile);
@@ -21,7 +22,7 @@ export interface JavaRuntime {
 /** Raised when no Java new enough to run the bridge could be found. */
 export class JavaNotFoundError extends Error {
   constructor(readonly guidance: string) {
-    super('No suitable Java installation was found.');
+    super(t('No suitable Java installation was found.'));
     this.name = 'JavaNotFoundError';
   }
 }
@@ -95,13 +96,18 @@ export async function locateJava(): Promise<JavaRuntime> {
   for (const candidate of candidates) {
     const runtime = await probeJava(candidate.executable, candidate.source);
     if (!runtime) {
-      rejected.push(`${candidate.executable} (${candidate.source}) could not be run`);
+      rejected.push(t('{0} ({1}) could not be run', candidate.executable, candidate.source));
       continue;
     }
     if (runtime.majorVersion < MINIMUM_JAVA_VERSION) {
       rejected.push(
-        `${candidate.executable} (${candidate.source}) is Java ${runtime.majorVersion}, ` +
-          `and version ${MINIMUM_JAVA_VERSION} or newer is required`,
+        t(
+          '{0} ({1}) is Java {2}, and version {3} or newer is required',
+          candidate.executable,
+          candidate.source,
+          runtime.majorVersion,
+          MINIMUM_JAVA_VERSION,
+        ),
       );
       continue;
     }
@@ -153,15 +159,15 @@ function toRuntime(
 function buildGuidance(rejected: readonly string[]): string {
   const checks = rejected.length > 0
     ? rejected.map((line) => `  - ${line}`).join('\n')
-    : '  - no candidates were available';
+    : t('  - no candidates were available');
 
   return [
-    `Open DB Client needs Java ${MINIMUM_JAVA_VERSION} or newer to run its JDBC bridge.`,
+    t('Open DB Client needs Java {0} or newer to run its JDBC bridge.', MINIMUM_JAVA_VERSION),
     '',
-    'Checked:',
+    t('Checked:'),
     checks,
     '',
-    'Fix this by installing a JDK and either adding it to PATH, setting JAVA_HOME, or pointing the',
-    `'open-dbclient.javaHome' setting at the installation directory.`,
+    t('Fix this by installing a JDK and either adding it to PATH, setting JAVA_HOME, or pointing the'),
+    t("'{0}' setting at the installation directory.", 'open-dbclient.javaHome'),
   ].join('\n');
 }

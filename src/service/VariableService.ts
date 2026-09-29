@@ -9,6 +9,7 @@ import {
   type SubstitutionResult,
 } from '../sql/variables';
 import { log } from '../util/logger';
+import { t } from '../util/i18n';
 
 const STORAGE_KEY = 'open-dbclient.variableValues';
 
@@ -60,7 +61,10 @@ export class VariableService implements vscode.Disposable {
     if (!compiled && source.trim() !== '' && this.warnedPattern !== source) {
       this.warnedPattern = source;
       void vscode.window.showWarningMessage(
-        `The variable pattern '${source}' is not a valid regular expression, so no variables will be substituted.`,
+        t(
+          "The variable pattern '{0}' is not a valid regular expression, so no variables will be substituted.",
+          source,
+        ),
       );
       log.warn(`Ignoring the variable pattern '${source}': it does not compile`);
     }

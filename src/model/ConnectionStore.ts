@@ -3,6 +3,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import * as vscode from 'vscode';
 
+import { t } from '../util/i18n';
 import { log } from '../util/logger';
 import {
   normalizeProfile,
@@ -65,8 +66,10 @@ export class ConnectionStore implements vscode.Disposable {
       log.error(error, `Could not read ${file}; continuing without saved connections`);
       this.profiles = [];
       void vscode.window.showWarningMessage(
-        `Open DB Client could not read its saved connections (${file}). The file was left as-is; ` +
-          'no connections are available until it is fixed or removed.',
+        t(
+          'Open DB Client could not read its saved connections ({0}). The file was left as-is; no connections are available until it is fixed or removed.',
+          file,
+        ),
       );
     }
   }
@@ -108,7 +111,7 @@ export class ConnectionStore implements vscode.Disposable {
   async update(draft: ConnectionProfileDraft & { id: string }): Promise<ConnectionProfile> {
     const existing = this.find(draft.id);
     if (!existing) {
-      throw new Error(`No saved connection with id '${draft.id}'`);
+      throw new Error(t("No saved connection with id '{0}'", draft.id));
     }
     const updated = { ...existing, ...draft } as ConnectionProfile;
     this.profiles = this.profiles.map((profile) => (profile.id === updated.id ? updated : profile));

@@ -179,7 +179,7 @@ public final class QueryHandlers {
             }
 
             try (ResultSet rows = statement.getResultSet()) {
-                List<ResultColumn> columns = ResultColumn.read(rows.getMetaData());
+                List<ResultColumn> columns = ResultColumn.read(rows.getMetaData(), connection);
                 QueryResultStore store = new QueryResultStore(active.queryId(), columns);
 
                 long count = 0;

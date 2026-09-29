@@ -59,6 +59,7 @@ public final class XlsxExport implements ExportTarget {
     private final Path target;
     private final int maxRowsPerSheet;
     private final boolean includeHeader;
+    private final boolean useColumnRemarks;
 
     private final List<Path> sheetFiles = new ArrayList<>();
 
@@ -67,11 +68,12 @@ public final class XlsxExport implements ExportTarget {
     private int rowsInSheet;
     private int sheetNumber;
 
-    public XlsxExport(Path target, int maxRowsPerSheet, boolean includeHeader) {
+    public XlsxExport(Path target, int maxRowsPerSheet, boolean includeHeader, boolean useColumnRemarks) {
         this.target = target;
         // Clamped rather than trusted: a larger value would produce a workbook Excel cannot open.
         this.maxRowsPerSheet = Math.min(EXCEL_MAX_ROWS, Math.max(1, maxRowsPerSheet));
         this.includeHeader = includeHeader;
+        this.useColumnRemarks = useColumnRemarks;
     }
 
     @Override
@@ -127,7 +129,7 @@ public final class XlsxExport implements ExportTarget {
         if (isFirst && includeHeader && columns != null) {
             List<Object> header = new ArrayList<>(columns.size());
             for (ResultColumn column : columns) {
-                header.add(column.label());
+                header.add(ExportTarget.headerLabel(column, useColumnRemarks));
             }
             writeRow(header);
         }

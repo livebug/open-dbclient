@@ -1,5 +1,6 @@
 package com.opendbclient.bridge;
 
+import com.opendbclient.bridge.export.CsvExportTests;
 import com.opendbclient.bridge.json.JsonTests;
 import com.opendbclient.bridge.metadata.DdlOptionsTests;
 import com.opendbclient.bridge.rpc.ProtocolTests;
@@ -18,6 +19,8 @@ public final class BridgeTests {
         ProtocolTests.register(runner);
         System.out.println("DDL options");
         DdlOptionsTests.register(runner);
+        System.out.println("CSV export");
+        CsvExportTests.register(runner);
 
         System.out.println();
         System.exit(runner.runAll());

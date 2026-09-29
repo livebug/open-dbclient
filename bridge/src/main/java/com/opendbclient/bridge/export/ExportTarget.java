@@ -27,6 +27,21 @@ public interface ExportTarget extends AutoCloseable {
     /** Called once after the last row. Implementations close their document here. */
     void end() throws IOException;
 
+    /**
+     * How many fields in the written file a reader may misparse; zero when there are none.
+     *
+     * <p>CSV is the only format with a way to get this wrong: with quoting turned off, a field containing
+     * the separator, a quote or a line break is written as it is, and the file may not read back. The write
+     * is still the right thing to do - the user asked for it - but they are told, because the alternative
+     * is finding out when the file is loaded again months later.
+     *
+     * <p>A count rather than a sentence: the wording belongs to whatever is showing it to the user, and
+     * that layer is the one that knows which language to write it in.
+     */
+    default long unquotedFields() {
+        return 0L;
+    }
+
     @Override
     void close() throws IOException;
 
@@ -53,5 +68,22 @@ public interface ExportTarget extends AutoCloseable {
             return text.append(']').toString();
         }
         return String.valueOf(value);
+    }
+
+    /**
+     * The text to put in a header cell for one column.
+     *
+     * <p>Only the report-like formats use this. JSON and INSERT statements keep the physical name:
+     * they exist to be read by another program, and a comment is documentation rather than an
+     * identifier - a Chinese comment used as a JSON key or as an INSERT column list would produce a
+     * file that no longer loads.
+     *
+     * @param useRemarks when false the physical label is always used, whatever the driver reported
+     */
+    static String headerLabel(ResultColumn column, boolean useRemarks) {
+        if (useRemarks && column.remarks() != null && !column.remarks().isBlank()) {
+            return column.remarks();
+        }
+        return column.label() == null || column.label().isBlank() ? column.name() : column.label();
     }
 }

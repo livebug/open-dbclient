@@ -1,5 +1,6 @@
 package com.opendbclient.bridge.result;
 
+import java.sql.Connection;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -22,6 +23,8 @@ import com.opendbclient.bridge.metadata.ColumnInfo;
  * @param label       label the driver assigned, which is the SQL alias when there is one
  * @param tableName   originating table, when the driver can attribute the column
  * @param schemaName  originating schema, when the driver reports one
+ * @param catalogName originating catalog, when the driver reports one
+ * @param remarks     the column's comment, or {@code null} when there is none or it could not be read
  * @param typeName    type name in the database's own vocabulary
  * @param jdbcType    {@link java.sql.Types} constant
  * @param precision   declared precision, 0 when unknown
@@ -34,6 +37,8 @@ public record ResultColumn(
         String label,
         String tableName,
         String schemaName,
+        String catalogName,
+        String remarks,
         String typeName,
         int jdbcType,
         int precision,
@@ -71,6 +76,10 @@ public record ResultColumn(
                     firstNonBlank(label, name, effectiveName),
                     value(() -> meta.getTableName(index), null),
                     value(() -> meta.getSchemaName(index), null),
+                    value(() -> meta.getCatalogName(index), null),
+                    // Filled in by `read(meta, connection)`, which can reach DatabaseMetaData. A
+                    // result column that belongs to no table has no comment to find either.
+                    null,
                     firstNonBlank(typeName, "UNKNOWN"),
                     jdbcType,
                     precision,
@@ -79,6 +88,26 @@ public record ResultColumn(
                     renderType(typeName, jdbcType, precision, scale)));
         }
         return columns;
+    }
+
+    /**
+     * Reads column metadata and attaches the comment of every column that belongs to a table.
+     *
+     * <p>Separate from {@link #read(ResultSetMetaData)} because the comment lives in
+     * {@code DatabaseMetaData}, not in the result set. A comment is what a column is *called* in the
+     * user's own vocabulary - on many schemas the physical name is an English abbreviation and the
+     * comment is the label people actually use - so it is worth a metadata round trip per table, but
+     * not worth failing a query over.
+     */
+    public static List<ResultColumn> read(ResultSetMetaData meta, Connection connection) throws SQLException {
+        return ColumnRemarks.attach(read(meta), connection);
+    }
+
+    /** The same column, with a comment attached. */
+    public ResultColumn withRemarks(String newRemarks) {
+        return new ResultColumn(
+                name, label, tableName, schemaName, catalogName, newRemarks,
+                typeName, jdbcType, precision, scale, nullable, displayType);
     }
 
     /** Renders the type for display, applying the same length rules as table metadata. */
@@ -125,6 +154,12 @@ public record ResultColumn(
         }
         if (schemaName != null && !schemaName.isBlank()) {
             payload.put("schemaName", schemaName);
+        }
+        if (catalogName != null && !catalogName.isBlank()) {
+            payload.put("catalogName", catalogName);
+        }
+        if (remarks != null && !remarks.isBlank()) {
+            payload.put("remarks", remarks);
         }
         return payload;
     }

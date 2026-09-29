@@ -87,6 +87,7 @@ public final class ExportHandlers {
 
         long startNanos = System.nanoTime();
         long exportedRows;
+        long unquotedFields;
         try (ExportTarget exporter = ExportService.create(format, target, options, tableName)) {
             if (queryId != null) {
                 exportedRows = exportStoredResult(services, queryId, exporter, ctx);
@@ -94,6 +95,9 @@ public final class ExportHandlers {
                 String connectionId = Json.requireStr(params, "connectionId");
                 exportedRows = exportQuery(services, connectionId, sql, exporter, ctx);
             }
+            // Read before the exporter is closed, and after every row has been written: this is the
+            // earliest point at which the whole file's worth of decisions has been made.
+            unquotedFields = exporter.unquotedFields();
         } catch (IOException | SQLException | RuntimeException failure) {
             // A half-written export is worse than none: the user cannot tell whether the file is
             // complete, and will assume it is.
@@ -105,12 +109,16 @@ public final class ExportHandlers {
         long bytes = Files.exists(target) ? Files.size(target) : 0L;
         Log.info("Exported %d row(s) to %s (%d bytes, %d ms)", exportedRows, target, bytes, elapsedMillis);
 
-        return Json.obj(
+        Map<String, Object> result = Json.obj(
                 "file", target.toString(),
                 "format", format,
                 "rows", exportedRows,
                 "bytes", bytes,
                 "elapsedMillis", elapsedMillis);
+        if (unquotedFields > 0) {
+            result.put("unquotedFields", unquotedFields);
+        }
+        return result;
     }
 
     /** Streams a previously executed result out of its spill file. */
@@ -188,7 +196,7 @@ public final class ExportHandlers {
             }
 
             try (ResultSet rows = statement.getResultSet()) {
-                List<ResultColumn> columns = ResultColumn.read(rows.getMetaData());
+                List<ResultColumn> columns = ResultColumn.read(rows.getMetaData(), connection);
                 exporter.begin(columns);
 
                 long exported = 0;

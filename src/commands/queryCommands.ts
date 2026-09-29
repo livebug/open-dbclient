@@ -7,7 +7,7 @@ import type { DatabaseTreeNode, TableNode } from '../tree/nodeTypes';
 import { qualifiedName } from '../tree/nodeTypes';
 import type { HistoryNode } from '../tree/HistoryTreeProvider';
 import { isSqlDocument } from '../service/SqlEditorBinding';
-import { VariablePanel } from '../webview/VariablePanel';
+import { VariablesView } from '../webview/VariablesView';
 import {
   appliesTo,
   buildActionContext,
@@ -24,6 +24,7 @@ import {
   splitStatements,
 } from '../util/sqlStatementParser';
 import { describeError, log } from '../util/logger';
+import { t } from '../util/i18n';
 import type { CommandDependencies } from './types';
 
 /** Commands that run statements and inspect schema. */
@@ -51,7 +52,7 @@ export function registerQueryCommands(dependencies: CommandDependencies): vscode
       // without the other would leave completion offering tables that no longer exist.
       dependencies.metadataCache.invalidate();
       dependencies.tree.refresh();
-      void vscode.window.showInformationMessage('Schema information refreshed.');
+      void vscode.window.showInformationMessage(t('Schema information refreshed.'));
     }),
     register(Commands.insertHistoryEntry, (node) => insertHistory(asHistoryNode(node))),
     register(Commands.deleteHistoryEntry, (node) =>
@@ -100,12 +101,12 @@ async function openQuery(
       profile: candidate,
     }));
     if (options.length === 0) {
-      void vscode.window.showInformationMessage('Add a connection first.');
+      void vscode.window.showInformationMessage(t('Add a connection first.'));
       return;
     }
     profile = options.length === 1
       ? options[0].profile
-      : (await vscode.window.showQuickPick(options, { title: 'Connection' }))?.profile;
+      : (await vscode.window.showQuickPick(options, { title: t('Connection') }))?.profile;
   }
   if (!profile) {
     return;
@@ -125,7 +126,7 @@ async function runFromEditor(
 ): Promise<void> {
   const editor = vscode.window.activeTextEditor;
   if (!editor || !isSqlDocument(editor.document)) {
-    void vscode.window.showInformationMessage('Open a SQL file to run a query.');
+    void vscode.window.showInformationMessage(t('Open a SQL file to run a query.'));
     return;
   }
 
@@ -139,16 +140,16 @@ async function runFromEditor(
   if (wholeScript) {
     const statements = splitStatements(editor.document.getText());
     if (statements.length === 0) {
-      void vscode.window.showInformationMessage('There is nothing to run.');
+      void vscode.window.showInformationMessage(t('There is nothing to run.'));
       return;
     }
     if (statements.length > 1) {
       const confirmed = await vscode.window.showWarningMessage(
-        `Run all ${statements.length} statements?`,
+        t('Run all {0} statements?', statements.length),
         { modal: true },
-        'Run All',
+        t('Run All'),
       );
-      if (confirmed !== 'Run All') {
+      if (confirmed !== t('Run All')) {
         return;
       }
     }
@@ -173,7 +174,7 @@ async function runFromEditor(
   );
 
   if (!sql) {
-    void vscode.window.showInformationMessage('There is no statement at the cursor.');
+    void vscode.window.showInformationMessage(t('There is no statement at the cursor.'));
     return;
   }
   if (!(await confirmIfDestructive(sql))) {
@@ -226,9 +227,12 @@ async function runSingleStatement(
   if (resolved.missing.length > 0) {
     // Placeholders without a value are left in the statement rather than blanked out, and the run is
     // refused: sending `> ` to a database would either fail confusingly or query something else.
-    VariablePanel.show(dependencies.variables);
+    void VariablesView.reveal();
     void vscode.window.showWarningMessage(
-      `Fill in ${resolved.missing.map((name) => `\${${name}}`).join(', ')} before running this statement.`,
+      t(
+        'Fill in {0} before running this statement.',
+        resolved.missing.map((name) => `\${${name}}`).join(', '),
+      ),
     );
     return;
   }
@@ -236,7 +240,7 @@ async function runSingleStatement(
 
   const panel = await ResultPanel.show({
     key: `${profile.id}:${editor.document.uri.toString()}`,
-    title: `Result - ${profileLabel(profile)}`,
+    title: t('Result - {0}', profileLabel(profile)),
     extensionUri: dependencies.extensionUri,
     bridge: dependencies.bridge,
     connections: dependencies.connections,
@@ -319,7 +323,7 @@ async function runTablePreview(
 
   const profile = dependencies.store.find(table.connectionId);
   if (!profile) {
-    void vscode.window.showErrorMessage('The connection for this table is no longer saved.');
+    void vscode.window.showErrorMessage(t('The connection for this table is no longer saved.'));
     return;
   }
 
@@ -383,11 +387,15 @@ async function runCustomAction(
   if (applicable.length === 0) {
     const action = await vscode.window.showInformationMessage(
       parsed.actions.length === 0
-        ? 'No custom actions are defined yet.'
-        : `None of the ${parsed.actions.length} custom action(s) applies to a ${target.kind}.`,
-      'Open Settings',
+        ? t('No custom actions are defined yet.')
+        : t(
+            'None of the {0} custom action(s) applies to a {1}.',
+            parsed.actions.length,
+            target.kind,
+          ),
+      t('Open Settings'),
     );
-    if (action === 'Open Settings') {
+    if (action === t('Open Settings')) {
       await vscode.commands.executeCommand('workbench.action.openSettings', Config.customActions);
     }
     return;
@@ -405,7 +413,7 @@ async function runCustomAction(
               detail: action.sql,
               action,
             })),
-            { title: `Run an action on ${subject}`, matchOnDescription: true, matchOnDetail: true },
+            { title: t('Run an action on {0}', subject), matchOnDescription: true, matchOnDetail: true },
           )
         )?.action;
   if (!picked) {
@@ -414,7 +422,7 @@ async function runCustomAction(
 
   const profile = dependencies.store.find(target.connectionId);
   if (!profile) {
-    void vscode.window.showErrorMessage('The connection for this object is no longer saved.');
+    void vscode.window.showErrorMessage(t('The connection for this object is no longer saved.'));
     return;
   }
   await ensureConnected(dependencies, profile);
@@ -432,7 +440,12 @@ async function runCustomAction(
   const unresolved = unresolvedPlaceholders(picked.sql, context);
   if (unresolved.length > 0) {
     void vscode.window.showWarningMessage(
-      `The action '${picked.label}' uses ${unresolved.join(', ')}, which is not available on a ${target.kind}.`,
+      t(
+        "The action '{0}' uses {1}, which is not available on a {2}.",
+        picked.label,
+        unresolved.join(', '),
+        target.kind,
+      ),
     );
     return;
   }
@@ -491,13 +504,13 @@ function actionTargetOf(node: DatabaseTreeNode | undefined):
 async function cancelCurrent(dependencies: CommandDependencies): Promise<void> {  const editor = vscode.window.activeTextEditor;
   const profile = editor ? await resolveProfile(dependencies, editor.document) : undefined;
   if (!profile) {
-    void vscode.window.showInformationMessage('No connection is associated with this editor.');
+    void vscode.window.showInformationMessage(t('No connection is associated with this editor.'));
     return;
   }
 
   const queryId = ResultPanel.runningQueryIdFor(profile.id);
   if (!queryId) {
-    void vscode.window.showInformationMessage('No statement is currently running.');
+    void vscode.window.showInformationMessage(t('No statement is currently running.'));
     return;
   }
 
@@ -505,7 +518,9 @@ async function cancelCurrent(dependencies: CommandDependencies): Promise<void> {
     await dependencies.bridge.request(Methods.queryCancel, { queryId });
     log.info(`Cancellation requested for '${queryId}'`);
   } catch (error) {
-    void vscode.window.showErrorMessage(`Could not cancel the statement: ${describeError(error)}`);
+    void vscode.window.showErrorMessage(
+      t('Could not cancel the statement: {0}', describeError(error)),
+    );
   }
 }
 
@@ -523,7 +538,7 @@ function nextQueryId(): string {
 async function exportFromEditor(dependencies: CommandDependencies): Promise<void> {
   const editor = vscode.window.activeTextEditor;
   if (!editor || !isSqlDocument(editor.document)) {
-    void vscode.window.showInformationMessage('Open a SQL file to export a query.');
+    void vscode.window.showInformationMessage(t('Open a SQL file to export a query.'));
     return;
   }
 
@@ -543,7 +558,7 @@ async function exportFromEditor(dependencies: CommandDependencies): Promise<void
     editor.document.offsetAt(editor.selection.active),
   );
   if (!sql) {
-    void vscode.window.showInformationMessage('There is no statement to export.');
+    void vscode.window.showInformationMessage(t('There is no statement to export.'));
     return;
   }
 
@@ -551,9 +566,12 @@ async function exportFromEditor(dependencies: CommandDependencies): Promise<void
 
   const resolved = dependencies.variables.resolve(sql);
   if (resolved.missing.length > 0) {
-    VariablePanel.show(dependencies.variables);
+    void VariablesView.reveal();
     void vscode.window.showWarningMessage(
-      `Fill in ${resolved.missing.map((name) => `\${${name}}`).join(', ')} before exporting this statement.`,
+      t(
+        'Fill in {0} before exporting this statement.',
+        resolved.missing.map((name) => `\${${name}}`).join(', '),
+      ),
     );
     return;
   }
@@ -575,7 +593,7 @@ async function exportTable(
   const table = node as TableNode;
   const profile = dependencies.store.find(table.connectionId);
   if (!profile) {
-    void vscode.window.showErrorMessage('The connection for this table is no longer saved.');
+    void vscode.window.showErrorMessage(t('The connection for this table is no longer saved.'));
     return;
   }
 
@@ -613,9 +631,9 @@ async function showColumns(
 
     const path = qualifiedName(table.catalog, table.schema, table.table.name);
     const lines = [
-      `-- Columns of ${path}`,
+      t('-- Columns of {0}', path),
       '',
-      `${'#'.padEnd(5)}${'Name'.padEnd(34)}${'Type'.padEnd(26)}${'Null'.padEnd(7)}${'Key'.padEnd(5)}Default`,
+      `${'#'.padEnd(5)}${t('Name').padEnd(34)}${t('Type').padEnd(26)}${t('Null').padEnd(7)}${t('Key').padEnd(5)}${t('Default')}`,
       '-'.repeat(100),
     ];
     for (const column of columns) {
@@ -623,7 +641,7 @@ async function showColumns(
         String(column.ordinal).padEnd(5) +
           column.name.padEnd(34) +
           column.displayType.padEnd(26) +
-          (column.nullableKnown ? (column.nullable ? 'YES' : 'NO') : '?').padEnd(7) +
+          (column.nullableKnown ? (column.nullable ? t('YES') : t('NO')) : '?').padEnd(7) +
           (column.primaryKey ? 'PK' : '').padEnd(5) +
           (column.defaultValue ?? ''),
       );
@@ -632,12 +650,12 @@ async function showColumns(
       }
     }
     if (columns.length === 0) {
-      lines.push('-- The driver reported no columns.');
+      lines.push(t('-- The driver reported no columns.'));
     }
 
     await dependencies.virtualDocuments.show(`${path}.columns`, 'sql', lines.join('\n'));
   } catch (error) {
-    void vscode.window.showErrorMessage(`Could not read columns: ${describeError(error)}`);
+    void vscode.window.showErrorMessage(t('Could not read columns: {0}', describeError(error)));
   }
 }
 
@@ -659,24 +677,24 @@ async function showIndexes(
 
     const grouped = new Map<string, typeof indexes>();
     for (const index of indexes) {
-      const key = index.name || '(unnamed)';
+      const key = index.name || t('(unnamed)');
       grouped.set(key, [...(grouped.get(key) ?? []), index]);
     }
 
     const path = qualifiedName(table.catalog, table.schema, table.table.name);
-    const lines = [`-- Indexes of ${path}`, ''];
+    const lines = [t('-- Indexes of {0}', path), ''];
     for (const [name, members] of grouped) {
       const sorted = [...members].sort((a, b) => a.ordinal - b.ordinal);
       const columns = sorted.map((member) => member.columnName ?? '?').join(', ');
       lines.push(`${sorted[0].unique ? 'UNIQUE ' : ''}${name} (${columns})  [${sorted[0].typeName}]`);
     }
     if (indexes.length === 0) {
-      lines.push('-- The driver reported no indexes.');
+      lines.push(t('-- The driver reported no indexes.'));
     }
 
     await dependencies.virtualDocuments.show(`${path}.indexes`, 'sql', lines.join('\n'));
   } catch (error) {
-    void vscode.window.showErrorMessage(`Could not read indexes: ${describeError(error)}`);
+    void vscode.window.showErrorMessage(t('Could not read indexes: {0}', describeError(error)));
   }
 }
 
@@ -714,7 +732,7 @@ async function showDdl(
     });
     await dependencies.virtualDocuments.show(`${path}`, 'sql', ddl);
   } catch (error) {
-    void vscode.window.showErrorMessage(`Could not generate DDL: ${describeError(error)}`);
+    void vscode.window.showErrorMessage(t('Could not generate DDL: {0}', describeError(error)));
   }
 }
 
@@ -758,7 +776,11 @@ async function showDdlFromQuery(
   const unresolved = unresolvedPlaceholders(rule.sql, context);
   if (unresolved.length > 0) {
     void vscode.window.showWarningMessage(
-      `The DDL query '${rule.id}' uses ${unresolved.join(', ')}, which is not available for this table.`,
+      t(
+        "The DDL query '{0}' uses {1}, which is not available for this table.",
+        rule.id,
+        unresolved.join(', '),
+      ),
     );
     return;
   }
@@ -767,7 +789,7 @@ async function showDdlFromQuery(
   const queryId = nextQueryId();
 
   const result = await vscode.window.withProgress(
-    { location: vscode.ProgressLocation.Notification, title: `Reading the DDL of ${path}` },
+    { location: vscode.ProgressLocation.Notification, title: t('Reading the DDL of {0}', path) },
     () =>
       dependencies.bridge.request<QueryExecuteResult>(
         Methods.queryExecute,
@@ -804,7 +826,7 @@ async function showDdlFromQuery(
 
   const panel = await ResultPanel.show({
     key: `${profile.id}:ddl:${path}`,
-    title: `DDL - ${table.table.name}`,
+    title: t('DDL - {0}', table.table.name),
     extensionUri: dependencies.extensionUri,
     bridge: dependencies.bridge,
     connections: dependencies.connections,
@@ -872,11 +894,11 @@ async function deleteHistory(
 
 async function clearHistory(dependencies: CommandDependencies): Promise<void> {
   const confirmed = await vscode.window.showWarningMessage(
-    'Clear the whole query history?',
+    t('Clear the whole query history?'),
     { modal: true },
-    'Clear',
+    t('Clear'),
   );
-  if (confirmed === 'Clear') {
+  if (confirmed === t('Clear')) {
     await dependencies.history.clear();
   }
 }
@@ -904,12 +926,12 @@ async function resolveProfile(
     profile,
   }));
   if (options.length === 0) {
-    void vscode.window.showInformationMessage('Add a connection first.');
+    void vscode.window.showInformationMessage(t('Add a connection first.'));
     return undefined;
   }
 
   const picked = await vscode.window.showQuickPick(options, {
-    title: 'This file is not attached to a connection',
+    title: t('This file is not attached to a connection'),
   });
   if (!picked) {
     return undefined;
@@ -953,11 +975,14 @@ async function confirmIfDestructive(sql: string): Promise<boolean> {
 
   const summary = sql.replace(/\s+/g, ' ').trim().slice(0, 120);
   const confirmed = await vscode.window.showWarningMessage(
-    `This statement affects an unbounded number of rows or drops an object:\n\n${summary}`,
+    t(
+      'This statement affects an unbounded number of rows or drops an object:\n\n{0}',
+      summary,
+    ),
     { modal: true },
-    'Run Anyway',
+    t('Run Anyway'),
   );
-  return confirmed === 'Run Anyway';
+  return confirmed === t('Run Anyway');
 }
 
 /**

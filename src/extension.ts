@@ -18,13 +18,14 @@ import { MetadataCache } from './sql/metadataCache';
 import { SqlCompletionProvider } from './sql/completionProvider';
 import { SqlCodeLensProvider } from './sql/codeLensProvider';
 import { VariableService } from './service/VariableService';
-import { VariablePanel } from './webview/VariablePanel';
+import { VariablesView } from './webview/VariablesView';
 import { VirtualDocumentProvider } from './util/VirtualDocuments';
 import { JavaNotFoundError } from './bridge/JavaLocator';
 import { registerConnectionCommands, setDriverContext } from './commands/connectionCommands';
 import { registerQueryCommands } from './commands/queryCommands';
 import type { CommandDependencies } from './commands/types';
 import { describeError, log } from './util/logger';
+import { currentLocale, setLocale, t } from './util/i18n';
 
 /**
  * Held so `deactivate` can stop the bridge gracefully.
@@ -36,7 +37,10 @@ import { describeError, log } from './util/logger';
 let bridgeForShutdown: JdbcBridge | undefined;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-  log.info('Open DB Client activating');
+  // Before anything else: every message below is written through the catalog, and the first ones are
+  // emitted while the services are still being constructed.
+  setLocale(vscode.env.language);
+  log.info(`Open DB Client activating (${currentLocale()})`);
 
   const bridge = new JdbcBridge(context);
   bridgeForShutdown = bridge;
@@ -60,6 +64,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const completion = new SqlCompletionProvider(metadataCache, binding, connections);
   const codeLens = new SqlCodeLensProvider();
   const variables = new VariableService(context);
+  const variablesView = new VariablesView(context.extensionUri, variables);
 
   // Completion is instant once the table list is cached, so it is fetched in the background as soon
   // as a connection comes up. On a database with thousands of tables that prefetch is slow enough to
@@ -104,19 +109,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   tree.attachView(connectionsView);
 
   /**
-   * Keeps the variable panel in step with the active script.
+   * Keeps the variables view in step with the active script.
    *
-   * It appears when the script has placeholders and closes when it does not, so it never lingers over
-   * a file that has no variables. Values live in the service, so closing and reopening the panel -
-   * or switching between two scripts that share a placeholder - loses nothing.
+   * Only the service is updated; the view is never opened or closed by the extension. It is a tab in
+   * the bottom panel, so it costs nothing while unused - whereas the old panel opened itself beside
+   * the editor whenever a script had a placeholder and closed itself again when one was deleted, which
+   * is the behaviour that read as flickering.
    */
   const syncVariables = (document: vscode.TextDocument | undefined): void => {
     variables.track(document);
-    if (variables.activeCount > 0) {
-      VariablePanel.show(variables);
-    } else {
-      VariablePanel.hide();
-    }
   };
 
   let variableTracking: ReturnType<typeof setTimeout> | undefined;
@@ -134,13 +135,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     completion,
     codeLens,
     variables,
+    variablesView,
     onConnectionStateChanged,
     virtualDocuments,
     virtualDocuments.register(),
 
     connectionsView,
 
-    vscode.window.registerTreeDataProvider(VIEW_HISTORY, historyTree),    vscode.commands.registerCommand(Commands.listDrivers, () => listDrivers(dependencies)),
+    vscode.window.registerTreeDataProvider(VIEW_HISTORY, historyTree),
+    vscode.window.registerWebviewViewProvider(VariablesView.viewType, variablesView),
+    vscode.commands.registerCommand(Commands.listDrivers, () => listDrivers(dependencies)),
     vscode.commands.registerCommand(Commands.restartBridge, () => restartBridge(dependencies)),
     vscode.commands.registerCommand(Commands.showHealth, () => health.showReport()),
 
@@ -189,7 +193,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
     vscode.commands.registerCommand(Commands.showVariables, () => {
       syncVariables(vscode.window.activeTextEditor?.document);
-      VariablePanel.focus();
+      void VariablesView.reveal();
     }),
 
     // Result panels cannot survive the process that holds their rows.
@@ -240,7 +244,7 @@ async function refreshDrivers(
     } else {
       log.error(error, 'Registering JDBC drivers failed');
       if (!options.quiet) {
-        void vscode.window.showErrorMessage(`Could not load JDBC drivers: ${describeError(error)}`);
+        void vscode.window.showErrorMessage(t('Could not load JDBC drivers: {0}', describeError(error)));
       }
     }
   } finally {
@@ -257,10 +261,10 @@ async function listDrivers(dependencies: CommandDependencies): Promise<void> {
     ...drivers.map((driver) => ({
       label: `$(check) ${driver.displayName}`,
       description: driver.driverClassName,
-      detail: driver.sourceJar ? `From ${driver.sourceJar}` : 'Loaded by explicit class name',
+      detail: driver.sourceJar ? t('From {0}', driver.sourceJar) : t('Loaded by explicit class name'),
     })),
     ...failures.map((failure) => ({
-      label: `$(error) ${failure.driverClassName ?? failure.jar ?? 'unknown'}`,
+      label: `$(error) ${failure.driverClassName ?? failure.jar ?? t('unknown')}`,
       description: failure.driverClassName ?? '',
       detail: failure.message,
     })),
@@ -268,10 +272,10 @@ async function listDrivers(dependencies: CommandDependencies): Promise<void> {
 
   if (items.length === 0) {
     const action = await vscode.window.showInformationMessage(
-      'No JDBC drivers are loaded. Add a driver jar to connect to a database.',
-      'Add Driver Jar…',
+      t('No JDBC drivers are loaded. Add a driver jar to connect to a database.'),
+      t('Add Driver Jar…'),
     );
-    if (action === 'Add Driver Jar…') {
+    if (action === t('Add Driver Jar…')) {
       await dependencies.drivers.addJars();
       await setDriverContext(dependencies);
     }
@@ -279,8 +283,11 @@ async function listDrivers(dependencies: CommandDependencies): Promise<void> {
   }
 
   await vscode.window.showQuickPick(items, {
-    title: `${drivers.length} driver(s) loaded`,
-    placeHolder: failures.length > 0 ? `${failures.length} could not be loaded` : 'All loaded successfully',
+    title: t('{0} driver(s) loaded', drivers.length),
+    placeHolder:
+      failures.length > 0
+        ? t('{0} could not be loaded', failures.length)
+        : t('All loaded successfully'),
   });
 }
 
@@ -292,23 +299,25 @@ async function listDrivers(dependencies: CommandDependencies): Promise<void> {
  */
 async function restartBridge(dependencies: CommandDependencies): Promise<void> {
   const confirmed = await vscode.window.showWarningMessage(
-    'Restart the JDBC bridge? Every open connection will be closed and results will be discarded.',
+    t('Restart the JDBC bridge? Every open connection will be closed and results will be discarded.'),
     { modal: true },
-    'Restart',
+    t('Restart'),
   );
-  if (confirmed !== 'Restart') {
+  if (confirmed !== t('Restart')) {
     return;
   }
 
   await vscode.window.withProgress(
-    { location: vscode.ProgressLocation.Notification, title: 'Restarting the JDBC bridge' },
+    { location: vscode.ProgressLocation.Notification, title: t('Restarting the JDBC bridge') },
     async () => {
       try {
         await dependencies.bridge.restart();
         await refreshDrivers(dependencies, { quiet: false });
-        void vscode.window.showInformationMessage('The JDBC bridge has been restarted.');
+        void vscode.window.showInformationMessage(t('The JDBC bridge has been restarted.'));
       } catch (error) {
-        void vscode.window.showErrorMessage(`Could not restart the bridge: ${describeError(error)}`);
+        void vscode.window.showErrorMessage(
+          t('Could not restart the bridge: {0}', describeError(error)),
+        );
       }
     },
   );

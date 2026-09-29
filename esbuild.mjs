@@ -1,9 +1,10 @@
 // Build script for the VS Code extension bundle and its webviews.
 //
-// Three independent bundles are produced:
-//   out/extension.js         - extension host bundle (node, commonjs, `vscode` external)
-//   media/result/main.js     - query result grid webview (browser, iife)
-//   media/connection/main.js - connection form webview (browser, iife)
+// Four independent bundles are produced:
+//   out/extension.js          - extension host bundle (node, commonjs, `vscode` external)
+//   media/result/main.js      - query result grid webview (browser, iife)
+//   media/connection/main.js  - connection form webview (browser, iife)
+//   media/variables/main.js   - SQL script variables view (browser, iife)
 //
 // There is no health dashboard bundle: the health report is emitted as Markdown and rendered into a
 // read-only editor, which gives selection, search and copy for free.
@@ -47,6 +48,16 @@ const targets = [
   {
     entryPoints: ['media/connection/main.ts'],
     outfile: 'media/connection/main.js',
+    bundle: true,
+    format: 'iife',
+    platform: 'browser',
+    target: 'chrome120',
+    sourcemap: !production,
+    minify: production,
+  },
+  {
+    entryPoints: ['media/variables/main.ts'],
+    outfile: 'media/variables/main.js',
     bundle: true,
     format: 'iife',
     platform: 'browser',

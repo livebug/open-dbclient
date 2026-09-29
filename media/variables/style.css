@@ -1,0 +1,42 @@
+/* The SQL script variables view: a label and an input per placeholder. */
+
+body {
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
+  color: var(--vscode-foreground);
+  padding: 10px 12px;
+}
+
+p.hint {
+  color: var(--vscode-descriptionForeground);
+  margin: 0 0 10px;
+  max-width: 70ch;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: minmax(140px, max-content) minmax(160px, 1fr);
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.name {
+  font-family: var(--vscode-editor-font-family);
+  white-space: nowrap;
+}
+
+input {
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border, transparent);
+  border-radius: 2px;
+  padding: 4px 6px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+input:focus {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
+}

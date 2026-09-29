@@ -20,12 +20,48 @@ const read = (...parts) => readFileSync(join(root, ...parts), 'utf8');
 const readme = read('README.md');
 const pkg = JSON.parse(read('package.json'));
 
+// --- manifest strings that live in the nls bundles -------------------------------------------------
+
+// The manifest holds `%key%` placeholders, which VS Code substitutes from `package.nls.json` (or its
+// translation) before showing anything. Without doing the same here, every command label would read as
+// `%cmd.runQuery%` and the checks below would report the whole palette as undocumented.
+//
+// The English bundle is used deliberately, whatever language the UI is in: the README is a document
+// about the extension, the check has to be deterministic, and comparing against the source text is what
+// keeps it independent of the reader's locale.
+const readBundle = (file) => (existsSync(join(root, file)) ? JSON.parse(read(file)) : {});
+const nls = readBundle('package.nls.json');
+const nlsZh = readBundle('package.nls.zh-cn.json');
+
+const localize = (value) =>
+  typeof value === 'string'
+    ? value.replace(/%([^%]+)%/g, (whole, key) => nls[key] ?? whole)
+    : value;
+
 const problems = [];
 const check = (message) => console.log(`  ok  ${message}`);
 const fail = (message) => {
   problems.push(message);
   console.log(`  FAIL ${message}`);
 };
+
+// A translated key that is missing, or a key nothing references any more, is invisible until a user in
+// that language sees English (or a raw `%key%`) in the UI. Both are compared here.
+const referencedKeys = new Set(
+  [...read('package.json').matchAll(/%([A-Za-z0-9_.]+)%/g)].map((match) => match[1]),
+);
+const missingEnglish = [...referencedKeys].filter((key) => !(key in nls));
+const missingChinese = [...referencedKeys].filter((key) => !(key in nlsZh));
+const staleChinese = Object.keys(nlsZh).filter((key) => !referencedKeys.has(key));
+if (missingEnglish.length > 0) {
+  fail(`package.nls.json is missing keys used by the manifest: ${missingEnglish.join(', ')}`);
+} else if (missingChinese.length > 0) {
+  fail(`package.nls.zh-cn.json is missing keys: ${missingChinese.join(', ')}`);
+} else if (staleChinese.length > 0) {
+  fail(`package.nls.zh-cn.json has keys the manifest no longer uses: ${staleChinese.join(', ')}`);
+} else {
+  check(`${referencedKeys.size} manifest strings are in both nls bundles`);
+}
 
 // --- relative links -------------------------------------------------------------------------------
 
@@ -77,7 +113,10 @@ if (unknownSettings.length > 0) {
 // --- command palette labels -----------------------------------------------------------------------
 
 const paletteLabels = new Set(
-  pkg.contributes.commands.map((c) => (c.category ? `${c.category}: ${c.title}` : c.title)),
+  pkg.contributes.commands.map((c) => {
+    const title = localize(c.title);
+    return c.category ? `${c.category}: ${title}` : title;
+  }),
 );
 const referencedCommands = [
   ...new Set([...readme.matchAll(/\*\*([^*:]+: [^*]+)\*\*/g)].map((m) => m[1].trim())),
@@ -93,6 +132,7 @@ if (unknownCommands.length > 0) {
 
 const undocumentedKeybindings = pkg.contributes.keybindings
   .map((k) => pkg.contributes.commands.find((c) => c.command === k.command)?.title)
+  .map(localize)
   .filter((title) => title !== undefined && !readme.includes(title));
 if (undocumentedKeybindings.length > 0) {
   fail(`keybound commands are not documented: ${undocumentedKeybindings.join(', ')}`);
@@ -101,7 +141,7 @@ if (undocumentedKeybindings.length > 0) {
 }
 
 const undocumentedViews = pkg.contributes.views['open-dbclient']
-  .map((v) => v.name)
+  .map((v) => localize(v.name))
   .filter((name) => !readme.includes(name));
 if (undocumentedViews.length > 0) {
   fail(`views are not mentioned in the README: ${undocumentedViews.join(', ')}`);

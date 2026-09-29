@@ -42,7 +42,14 @@
       "activitybar": [
         {
           "id": "open-dbclient",
-          "title": "Open DB Client",
+          "title": "%viewContainer.title%",
+          "icon": "media/icon/database.svg"
+        }
+      ],
+      "panel": [
+        {
+          "id": "open-dbclient.panel",
+          "title": "%viewContainer.title%",
           "icon": "media/icon/database.svg"
         }
       ]
@@ -51,230 +58,238 @@
       "open-dbclient": [
         {
           "id": "open-dbclient.connections",
-          "name": "Connections",
+          "name": "%view.connections%",
           "icon": "media/icon/database.svg"
         },
         {
           "id": "open-dbclient.history",
-          "name": "Query History",
+          "name": "%view.history%",
           "icon": "media/icon/history.svg"
+        }
+      ],
+      "open-dbclient.panel": [
+        {
+          "id": "open-dbclient.variables",
+          "name": "%view.variables%",
+          "type": "webview",
+          "icon": "media/icon/database.svg"
         }
       ]
     },
     "viewsWelcome": [
       {
         "view": "open-dbclient.connections",
-        "contents": "No database connections yet.\n\nBefore connecting you need a JDBC driver jar. Open the driver folder and drop the jar in, then add a connection.\n\n[Add Connection](command:open-dbclient.addConnection)\n[Open Driver Folder](command:open-dbclient.openDriverFolder)"
+        "contents": "%welcome.connections%"
       }
     ],
     "commands": [
       {
         "command": "open-dbclient.addConnection",
-        "title": "Add Connection",
+        "title": "%cmd.addConnection%",
         "category": "DB Client",
         "icon": "$(add)"
       },
       {
         "command": "open-dbclient.editConnection",
-        "title": "Edit Connection",
+        "title": "%cmd.editConnection%",
         "category": "DB Client",
         "icon": "$(edit)"
       },
       {
         "command": "open-dbclient.duplicateConnection",
-        "title": "Duplicate Connection",
+        "title": "%cmd.duplicateConnection%",
         "category": "DB Client",
         "icon": "$(copy)"
       },
       {
         "command": "open-dbclient.deleteConnection",
-        "title": "Delete Connection",
+        "title": "%cmd.deleteConnection%",
         "category": "DB Client",
         "icon": "$(trash)"
       },
       {
         "command": "open-dbclient.testConnection",
-        "title": "Test Connection",
+        "title": "%cmd.testConnection%",
         "category": "DB Client"
       },
       {
         "command": "open-dbclient.connect",
-        "title": "Connect",
+        "title": "%cmd.connect%",
         "category": "DB Client",
         "icon": "$(plug)"
       },
       {
         "command": "open-dbclient.disconnect",
-        "title": "Disconnect",
+        "title": "%cmd.disconnect%",
         "category": "DB Client",
         "icon": "$(debug-disconnect)"
       },
       {
         "command": "open-dbclient.selectConnection",
-        "title": "Attach This File to a Connection",
+        "title": "%cmd.selectConnection%",
         "category": "DB Client",
         "icon": "$(database)"
       },
       {
         "command": "open-dbclient.refreshNode",
-        "title": "Refresh",
+        "title": "%cmd.refreshNode%",
         "category": "DB Client",
         "icon": "$(refresh)"
       },
       {
         "command": "open-dbclient.refreshAll",
-        "title": "Refresh All",
+        "title": "%cmd.refreshAll%",
         "category": "DB Client",
         "icon": "$(refresh)"
       },
       {
         "command": "open-dbclient.openQuery",
-        "title": "New Query",
+        "title": "%cmd.openQuery%",
         "category": "DB Client",
         "icon": "$(new-file)"
       },
       {
         "command": "open-dbclient.runQuery",
-        "title": "Run Query",
+        "title": "%cmd.runQuery%",
         "category": "DB Client",
         "icon": "$(play)"
       },
       {
         "command": "open-dbclient.runAllQueries",
-        "title": "Run All Queries",
+        "title": "%cmd.runAllQueries%",
         "category": "DB Client"
       },
       {
         "command": "open-dbclient.runStatement",
-        "title": "Run This Statement",
+        "title": "%cmd.runStatement%",
         "category": "DB Client"
       },
       {
         "command": "open-dbclient.showVariables",
-        "title": "Show Query Variables",
+        "title": "%cmd.showVariables%",
         "category": "DB Client",
         "icon": "$(symbol-parameter)"
       },
       {
         "command": "open-dbclient.runCustomAction",
-        "title": "Run Custom Action...",
+        "title": "%cmd.runCustomAction%",
         "category": "DB Client",
         "icon": "$(play)"
       },
       {
         "command": "open-dbclient.runQueryFromTree",
-        "title": "Select Top 200 Rows",
+        "title": "%cmd.runQueryFromTree%",
         "category": "DB Client",
         "icon": "$(play)"
       },
       {
         "command": "open-dbclient.cancelQuery",
-        "title": "Cancel Running Query",
+        "title": "%cmd.cancelQuery%",
         "category": "DB Client"
       },
       {
         "command": "open-dbclient.exportResult",
-        "title": "Export Result...",
+        "title": "%cmd.exportResult%",
         "category": "DB Client",
         "icon": "$(desktop-download)"
       },
       {
         "command": "open-dbclient.exportTable",
-        "title": "Export Table...",
+        "title": "%cmd.exportTable%",
         "category": "DB Client",
         "icon": "$(desktop-download)"
       },
       {
         "command": "open-dbclient.viewColumns",
-        "title": "Show Columns",
+        "title": "%cmd.viewColumns%",
         "category": "DB Client",
         "icon": "$(list-flat)"
       },
       {
         "command": "open-dbclient.viewIndexes",
-        "title": "Show Indexes",
+        "title": "%cmd.viewIndexes%",
         "category": "DB Client",
         "icon": "$(list-ordered)"
       },
       {
         "command": "open-dbclient.generateDdl",
-        "title": "Generate DDL",
+        "title": "%cmd.generateDdl%",
         "category": "DB Client",
         "icon": "$(code)"
       },
       {
         "command": "open-dbclient.copyName",
-        "title": "Copy Name",
+        "title": "%cmd.copyName%",
         "category": "DB Client",
         "icon": "$(clippy)"
       },
       {
         "command": "open-dbclient.addDriverJar",
-        "title": "Add Driver Jar...",
+        "title": "%cmd.addDriverJar%",
         "category": "DB Client",
         "icon": "$(add)"
       },
       {
         "command": "open-dbclient.openDriverFolder",
-        "title": "Open Driver Folder",
+        "title": "%cmd.openDriverFolder%",
         "category": "DB Client",
         "icon": "$(folder-opened)"
       },
       {
         "command": "open-dbclient.downloadDriver",
-        "title": "Download Driver from Maven Central...",
+        "title": "%cmd.downloadDriver%",
         "category": "DB Client",
         "icon": "$(cloud-download)"
       },
       {
         "command": "open-dbclient.listDrivers",
-        "title": "List Loaded Drivers",
+        "title": "%cmd.listDrivers%",
         "category": "DB Client"
       },
       {
         "command": "open-dbclient.restartBridge",
-        "title": "Restart JDBC Bridge",
+        "title": "%cmd.restartBridge%",
         "category": "DB Client",
         "icon": "$(debug-restart)"
       },
       {
         "command": "open-dbclient.showHealth",
-        "title": "Show JDBC Health",
+        "title": "%cmd.showHealth%",
         "category": "DB Client",
         "icon": "$(pulse)"
       },
       {
         "command": "open-dbclient.refreshMetadataCache",
-        "title": "Refresh Metadata Cache",
+        "title": "%cmd.refreshMetadataCache%",
         "category": "DB Client",
         "icon": "$(sync)"
       },
       {
         "command": "open-dbclient.filterTree",
-        "title": "Filter Tables and Views",
+        "title": "%cmd.filterTree%",
         "category": "DB Client",
         "icon": "$(filter)"
       },
       {
         "command": "open-dbclient.clearFilter",
-        "title": "Clear Table Filter",
+        "title": "%cmd.clearFilter%",
         "category": "DB Client",
         "icon": "$(clear-all)"
       },
       {
         "command": "open-dbclient.insertHistoryEntry",
-        "title": "Insert Query Into Editor",
+        "title": "%cmd.insertHistoryEntry%",
         "category": "DB Client"
       },
       {
         "command": "open-dbclient.deleteHistoryEntry",
-        "title": "Delete History Entry",
+        "title": "%cmd.deleteHistoryEntry%",
         "category": "DB Client",
         "icon": "$(close)"
       },
       {
         "command": "open-dbclient.clearHistory",
-        "title": "Clear Query History",
+        "title": "%cmd.clearHistory%",
         "category": "DB Client",
         "icon": "$(clear-all)"
       }
@@ -470,12 +485,12 @@
       ]
     },
     "configuration": {
-      "title": "Open DB Client",
+      "title": "%config.title%",
       "properties": {
         "open-dbclient.javaHome": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Path to the Java installation used for the JDBC bridge. Leave empty to auto-detect from `JAVA_HOME` or `PATH`. Requires **Java 17 or newer**.",
+          "markdownDescription": "%config.javaHome.description%",
           "scope": "machine-overridable"
         },
         "open-dbclient.javaArgs": {
@@ -484,13 +499,13 @@
             "type": "string"
           },
           "default": [],
-          "markdownDescription": "Extra JVM arguments appended to the bridge command line, e.g. `--add-opens=java.base/java.lang=ALL-UNNAMED`. Useful for legacy JDBC drivers that need reflective access on Java 17+.",
+          "markdownDescription": "%config.javaArgs.description%",
           "scope": "machine-overridable"
         },
         "open-dbclient.jvmMaxHeap": {
           "type": "string",
           "default": "1g",
-          "markdownDescription": "Maximum heap for the JDBC bridge process (equivalent to `-Xmx`). Defaults to `1g`."
+          "markdownDescription": "%config.jvmMaxHeap.description%"
         },
         "open-dbclient.driverPaths": {
           "type": "array",
@@ -498,7 +513,7 @@
             "type": "string"
           },
           "default": [],
-          "markdownDescription": "Extra locations to look for JDBC driver jars. Each entry may be a folder (scanned for `.jar` files directly inside it, not recursively) or a jar file itself. The folder managed by `DB Client: Add Driver Jar` is always scanned, so this is only needed for jars kept elsewhere.",
+          "markdownDescription": "%config.driverPaths.description%",
           "scope": "machine-overridable"
         },
         "open-dbclient.driverClassNames": {
@@ -507,7 +522,7 @@
             "type": "string"
           },
           "default": [],
-          "markdownDescription": "Driver classes to load explicitly, in addition to those jars advertise through `META-INF/services/java.sql.Driver`. Needed only for drivers that omit that file; without it such a driver cannot be loaded at all. Example: `com.vendor.jdbc.VendorDriver`.",
+          "markdownDescription": "%config.driverClassNames.description%",
           "scope": "machine-overridable"
         },
         "open-dbclient.connection.poolSize": {
@@ -515,30 +530,30 @@
           "default": 1,
           "minimum": 1,
           "maximum": 32,
-          "markdownDescription": "Maximum number of pooled JDBC connections per profile. The default of `1` behaves like a single long-lived connection, which suits interactive use. Raise it only if you run queries concurrently."
+          "markdownDescription": "%config.poolSize.description%"
         },
         "open-dbclient.query.fetchSize": {
           "type": "number",
           "default": 200,
           "minimum": 10,
           "maximum": 10000,
-          "markdownDescription": "Rows transferred per fetch when browsing a result grid."
+          "markdownDescription": "%config.fetchSize.description%"
         },
         "open-dbclient.query.confirmDangerous": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Ask for confirmation before running statements that look destructive (`DROP`, `TRUNCATE`, `DELETE`/`UPDATE` without a `WHERE` clause)."
+          "markdownDescription": "%config.confirmDangerous.description%"
         },
         "open-dbclient.query.maxRows": {
           "type": "number",
           "default": 100000,
           "minimum": 0,
-          "markdownDescription": "Row ceiling applied to every statement run from an editor. A statement that hits the ceiling is reported as truncated rather than silently cut short. Set to `0` for no ceiling. This does not affect exports, which are unbounded by design."
+          "markdownDescription": "%config.maxRows.description%"
         },
         "open-dbclient.query.codeLens": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Show a Run action above every statement in a SQL file."
+          "markdownDescription": "%config.codeLens.description%"
         },
         "open-dbclient.result.openIn": {
           "type": "string",
@@ -547,21 +562,21 @@
             "beside"
           ],
           "enumDescriptions": [
-            "Split the editor downwards, so the result sits under the SQL (up/down).",
-            "Split the editor to the right, so the result sits next to the SQL (left/right)."
+            "%config.resultOpenIn.below%",
+            "%config.resultOpenIn.beside%"
           ],
           "default": "below",
-          "markdownDescription": "Where a result panel opens."
+          "markdownDescription": "%config.resultOpenIn.description%"
         },
         "open-dbclient.variables.pattern": {
           "type": "string",
           "default": "\\$\\{\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*\\}",
-          "markdownDescription": "Regular expression that finds a parameter in a SQL script, with one capture group for its name. The default matches `${V_DATE}`. Matching text with no capture group is used whole as the name. Values are substituted before the statement runs; a placeholder with no value stops the run rather than being replaced by an empty string."
+          "markdownDescription": "%config.variablePattern.description%"
         },
         "open-dbclient.ddl.queries": {
           "type": "array",
           "default": [],
-          "markdownDescription": "Ask the database for a table's DDL instead of reconstructing it from JDBC metadata. Many databases answer this directly and better: `SHOW CREATE TABLE` on MySQL, `DESC` on Hive, `pg_get_tabledef` on PostgreSQL. Those statements are dialect-specific, so they are yours to write.\n\nThe **first rule whose `match` fits the connection's JDBC URL wins**; `*` matches any characters and the whole URL must match. A rule with no `match` fits every connection, so put it last to use it as a fallback. With no matching rule the built-in generator runs, which is what keeps the default behaviour unchanged.\n\nA template may use `${table}`, `${schema}`, `${catalog}`, `${qualified}`, `${column}` and `${connectionName}` for the **names as the driver reported them**, or `${quotedTable}`, `${quotedSchema}`, `${quotedCatalog}`, `${quotedQualified}` and `${quotedColumn}` for the same names wrapped in the database's quoting character. Use the unquoted forms in a string literal - `pg_get_tabledef('${qualified}')` - and the quoted ones where an identifier is expected.\n\nThe result is shown as the database returned it: one cell becomes a document, anything else opens in the result grid. The `ddl.ifNotExists`, `ddl.indent`, `ddl.includeIndexes` and `ddl.quoteIdentifiers` settings apply only to the built-in generator, so they are ignored when a rule matches.",
+          "markdownDescription": "%config.ddlQueries.description%",
           "items": {
             "type": "object",
             "required": [
@@ -570,15 +585,15 @@
             "properties": {
               "id": {
                 "type": "string",
-                "description": "Optional name for the rule, used in messages."
+                "description": "%config.ddlQueries.id%"
               },
               "match": {
                 "type": "string",
-                "description": "Glob tested against the JDBC URL, e.g. jdbc:hive2:*. Omit to match every connection."
+                "description": "%config.ddlQueries.match%"
               },
               "sql": {
                 "type": "string",
-                "description": "The statement to run, with optional ${...} placeholders."
+                "description": "%config.ddlQueries.sql%"
               }
             }
           }
@@ -586,27 +601,27 @@
         "open-dbclient.ddl.ifNotExists": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Generate `CREATE TABLE IF NOT EXISTS` rather than `CREATE TABLE`."
+          "markdownDescription": "%config.ddlIfNotExists.description%"
         },
         "open-dbclient.ddl.indent": {
           "type": "string",
           "default": "    ",
-          "markdownDescription": "Indent used for each generated column definition. Spaces, a tab or nothing at all."
+          "markdownDescription": "%config.ddlIndent.description%"
         },
         "open-dbclient.ddl.includeIndexes": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Append `CREATE INDEX` statements after the table. Turn off when indexes are managed separately from table definitions."
+          "markdownDescription": "%config.ddlIncludeIndexes.description%"
         },
         "open-dbclient.ddl.quoteIdentifiers": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Quote identifiers with the character the database itself reports. Turn off for a plain, unquoted name."
+          "markdownDescription": "%config.ddlQuoteIdentifiers.description%"
         },
         "open-dbclient.actions": {
           "type": "array",
           "default": [],
-          "markdownDescription": "Your own SQL actions, offered on tables, views and columns in the connection tree. Reachable from the play icon on a node, or from the command palette.\n\nA template may use `${table}`, `${schema}`, `${catalog}`, `${qualified}`, `${column}` and `${connectionName}` for the **names as the driver reported them**, or `${quotedTable}`, `${quotedSchema}`, `${quotedCatalog}`, `${quotedQualified}` and `${quotedColumn}` for the same names wrapped in the database's quoting character. Use the quoted forms where an identifier is expected - `SELECT COUNT(*) FROM ${quotedQualified}` - and the unquoted ones inside a string literal.\n\nA placeholder that cannot be filled for the node - `${column}` on a table, say - stops the action instead of being replaced by nothing, because `LIKE '%${column}%'` expanding to `LIKE '%%'` would quietly match everything.\n\nThe statement opens in a bound editor rather than running invisibly, so you can see it, change it, and run it again.",
+          "markdownDescription": "%config.actions.description%",
           "items": {
             "type": "object",
             "required": [
@@ -617,19 +632,19 @@
             "properties": {
               "id": {
                 "type": "string",
-                "description": "Stable identifier, shown next to the label in the picker."
+                "description": "%config.actions.id%"
               },
               "label": {
                 "type": "string",
-                "description": "What the action is called."
+                "description": "%config.actions.label%"
               },
               "description": {
                 "type": "string",
-                "description": "Optional: shown as the action's description in the picker."
+                "description": "%config.actions.descriptionField%"
               },
               "icon": {
                 "type": "string",
-                "description": "Optional icon, e.g. $(list-ordered)."
+                "description": "%config.actions.icon%"
               },
               "appliesTo": {
                 "type": "array",
@@ -641,11 +656,11 @@
                     "column"
                   ]
                 },
-                "description": "Where the action is offered. Omit to offer it everywhere."
+                "description": "%config.actions.appliesTo%"
               },
               "sql": {
                 "type": "string",
-                "description": "The statement, with optional ${...} placeholders."
+                "description": "%config.actions.sql%"
               }
             }
           }
@@ -653,71 +668,79 @@
         "open-dbclient.result.maxCacheBytes": {
           "type": "number",
           "default": 536870912,
-          "markdownDescription": "Maximum disk space (in bytes) the bridge may use for cached result sets. Least-recently-used results are evicted beyond this limit. Defaults to 512 MiB."
+          "markdownDescription": "%config.resultMaxCacheBytes.description%"
         },
         "open-dbclient.intellisense.enabled": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Enable SQL completion for tables, views, schemas, columns and keywords."
+          "markdownDescription": "%config.intellisenseEnabled.description%"
         },
         "open-dbclient.intellisense.prefetchTables": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Prefetch table names in the background right after connecting, so the first completion is instant. Disable this if your database has thousands of tables and connecting feels slow."
+          "markdownDescription": "%config.intellisensePrefetchTables.description%"
         },
         "open-dbclient.intellisense.columnCacheLimit": {
           "type": "number",
           "default": 500,
           "minimum": 50,
-          "markdownDescription": "How many tables to keep column metadata for in the completion cache (LRU). Lower this to reduce memory on very large databases."
+          "markdownDescription": "%config.intellisenseColumnCacheLimit.description%"
         },
         "open-dbclient.health.enabled": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Collect JDBC bridge health metrics (JVM memory, GC, pool, result cache, query statistics)."
+          "markdownDescription": "%config.healthEnabled.description%"
         },
         "open-dbclient.health.refreshInterval": {
           "type": "number",
           "default": 2000,
           "minimum": 500,
-          "markdownDescription": "How often the bridge pushes health metrics, in milliseconds."
+          "markdownDescription": "%config.healthRefreshInterval.description%"
         },
         "open-dbclient.health.showStatusBar": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Show a health summary in the status bar."
+          "markdownDescription": "%config.healthShowStatusBar.description%"
         },
         "open-dbclient.export.csv.delimiter": {
           "type": "string",
           "default": ",",
+          "markdownDescription": "%config.csvDelimiter.description%"
+        },
+        "open-dbclient.export.csv.quoting": {
+          "type": "string",
           "enum": [
-            ",",
-            ";",
-            "\t",
-            "|"
+            "minimal",
+            "always",
+            "never"
           ],
           "enumDescriptions": [
-            "Comma",
-            "Semicolon",
-            "Tab",
-            "Pipe"
+            "%config.csvQuoting.minimal%",
+            "%config.csvQuoting.always%",
+            "%config.csvQuoting.never%"
           ],
-          "markdownDescription": "Field delimiter for CSV export."
+          "default": "minimal",
+          "markdownDescription": "%config.csvQuoting.description%"
         },
         "open-dbclient.export.csv.writeBom": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Write a UTF-8 BOM so Excel detects the encoding correctly. Turn off for tools that choke on a BOM."
+          "markdownDescription": "%config.csvWriteBom.description%"
         },
         "open-dbclient.export.excel.maxRowsPerSheet": {
           "type": "number",
           "default": 1048576,
-          "markdownDescription": "Row limit per Excel worksheet; further rows spill into additional sheets."
+          "markdownDescription": "%config.excelMaxRowsPerSheet.description%"
         },
         "open-dbclient.export.includeHeader": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Include a header row in CSV and Excel exports."
+          "markdownDescription": "%config.includeHeader.description%"
+        },
+        "open-dbclient.export.useColumnRemarks": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "%config.useColumnRemarks.description%"
         },
         "open-dbclient.logLevel": {
           "type": "string",
@@ -729,7 +752,7 @@
             "debug",
             "trace"
           ],
-          "markdownDescription": "Verbosity of the \"DB Client\" output channel and the bridge process log."
+          "markdownDescription": "%config.logLevel.description%"
         }
       }
     }

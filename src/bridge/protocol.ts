@@ -262,6 +262,14 @@ export interface ResultColumnInfo {
   nullable: boolean;
   tableName?: string;
   schemaName?: string;
+  catalogName?: string;
+  /**
+   * Comment attached to the column by the database, when it has one and the driver reports it.
+   *
+   * On many schemas this is the name people actually use while the physical name is an abbreviation,
+   * which is why the grid shows it and exports can prefer it.
+   */
+  remarks?: string;
 }
 
 /**

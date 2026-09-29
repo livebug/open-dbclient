@@ -16,6 +16,7 @@ import type {
   HostToWebviewMessage,
   WebviewToHostMessage,
 } from '../../src/webview/messages';
+import { setLocale, t } from '../../src/util/i18n';
 
 declare function acquireVsCodeApi<T = unknown>(): {
   postMessage(message: WebviewToHostMessage): void;
@@ -24,6 +25,10 @@ declare function acquireVsCodeApi<T = unknown>(): {
 };
 
 const vscode = acquireVsCodeApi();
+
+// The host writes its display language into the document's `lang` attribute, so the catalog here
+// follows the same language the rest of the UI is in without a second message to keep in step.
+setLocale(document.documentElement.lang);
 
 /** Row height in pixels; must match the value in the stylesheet. */
 const ROW_HEIGHT = 22;
@@ -136,7 +141,7 @@ window.addEventListener('message', (event: MessageEvent<HostToWebviewMessage>) =
       state.sql = message.sql;
       state.connectionName = message.connectionName;
       state.elapsedMillis = message.elapsedMillis;
-      state.message = `${message.updateCount.toLocaleString()} row(s) affected.`;
+      state.message = t('{0} row(s) affected.', message.updateCount.toLocaleString());
       state.busy = false;
       render();
       break;
@@ -190,19 +195,19 @@ function renderToolbar(): void {
     const last = state.offset + state.rows.length;
 
     toolbar.append(
-      button('First', () => requestPage(0), { disabled: state.busy || state.offset === 0 }),
-      button('Previous', () => requestPage(Math.max(0, state.offset - state.pageSize)), {
+      button(t('First'), () => requestPage(0), { disabled: state.busy || state.offset === 0 }),
+      button(t('Previous'), () => requestPage(Math.max(0, state.offset - state.pageSize)), {
         disabled: state.busy || state.offset === 0,
       }),
-      text(`Rows ${first.toLocaleString()}–${last.toLocaleString()} of ${total.toLocaleString()}`),
-      button('Next', () => requestPage(state.offset + state.pageSize), {
+      text(t('Rows {0}–{1} of {2}', first.toLocaleString(), last.toLocaleString(), total.toLocaleString())),
+      button(t('Next'), () => requestPage(state.offset + state.pageSize), {
         disabled: state.busy || last >= total,
       }),
-      button('Last', () => requestPage(lastPageOffset()), {
+      button(t('Last'), () => requestPage(lastPageOffset()), {
         disabled: state.busy || last >= total,
       }),
       separator(),
-      text('Go to row'),
+      text(t('Go to row')),
       numberInput(state.offset + 1, (value) => {
         const target = Math.max(0, Math.min(value - 1, Math.max(0, total - 1)));
         requestPage(target - (target % state.pageSize));
@@ -213,12 +218,12 @@ function renderToolbar(): void {
   toolbar.append(spacer());
 
   if (state.mode === 'result') {
-    toolbar.append(button('Export…', () => post({ type: 'export' }), { primary: true }));
+    toolbar.append(button(t('Export…'), () => post({ type: 'export' }), { primary: true }));
   }
   if (state.busy) {
-    toolbar.append(button('Cancel', () => post({ type: 'cancel' })));
+    toolbar.append(button(t('Cancel'), () => post({ type: 'cancel' })));
   } else if (state.sql) {
-    toolbar.append(button('Run again', () => post({ type: 'rerun' })));
+    toolbar.append(button(t('Run again'), () => post({ type: 'rerun' })));
   }
 }
 
@@ -237,16 +242,16 @@ function renderContent(): void {
     }
 
     if (state.mode === 'running') {
-      placeholder.textContent = 'Running…';
+      placeholder.textContent = t('Running…');
     } else if (state.mode === 'error') {
-      placeholder.textContent = state.message ?? 'The statement failed.';
+      placeholder.textContent = state.message ?? t('The statement failed.');
       if (state.sqlState) {
         placeholder.textContent += `\n\nSQLState: ${state.sqlState}`;
       }
     } else if (state.mode === 'update') {
-      placeholder.textContent = state.message ?? 'The statement completed.';
+      placeholder.textContent = state.message ?? t('The statement completed.');
     } else {
-      placeholder.textContent = 'Run a query to see results here.';
+      placeholder.textContent = t('Run a query to see results here.');
     }
 
     if (state.sql) {
@@ -278,15 +283,19 @@ function renderContent(): void {
   for (const column of state.columns) {
     const cell = document.createElement('th');
     const name = document.createElement('span');
-    name.textContent = column.label;
-    if (column.tableName) {
-      cell.title = `${column.tableName}.${column.name} (${column.displayType})`;
-    } else {
-      cell.title = `${column.name} (${column.displayType})`;
-    }
+    // The comment - where a database has one, the name people actually use - leads, and the physical
+    // name stays visible underneath rather than being replaced. Showing only the comment would leave
+    // the user unable to write the column into SQL; showing only the name is what made a
+    // well-documented schema unreadable here in the first place.
+    const comment = column.remarks?.trim() ? column.remarks.trim() : undefined;
+    const qualified = column.tableName ? `${column.tableName}.${column.name}` : column.name;
+    name.textContent = comment ?? column.label;
     const type = document.createElement('span');
     type.className = 'type';
-    type.textContent = column.displayType;
+    type.textContent = comment ? `${qualified} · ${column.displayType}` : column.displayType;
+    cell.title = comment
+      ? `${comment}\n${qualified} (${column.displayType})`
+      : `${qualified} (${column.displayType})`;
     cell.append(name, type);
     headerRow.append(cell);
   }
@@ -339,7 +348,7 @@ function renderVisibleRows(force = false): void {
     const row = document.createElement('tr');
     const cell = document.createElement('td');
     cell.colSpan = state.columns.length + 1;
-    cell.textContent = 'No rows returned.';
+    cell.textContent = t('No rows returned.');
     cell.style.textAlign = 'center';
     cell.style.color = 'var(--vscode-descriptionForeground)';
     row.append(cell);
@@ -382,7 +391,7 @@ function renderRow(index: number): HTMLTableRowElement {
       const text = formatCell(value);
       cell.textContent = text;
       if (text.length > 80) {
-        cell.title = 'Double-click to see the full value';
+        cell.title = t('Double-click to see the full value');
       }
     }
 
@@ -410,16 +419,17 @@ function renderStatus(): void {
 
   if (state.mode === 'result') {
     statusBar.append(
-      text(`${state.totalRows.toLocaleString()} row(s)`),
-      text(`${state.columns.length} column(s)`),
+      text(t('{0} row(s)', state.totalRows.toLocaleString())),
+      text(t('{0} column(s)', state.columns.length)),
       text(formatDuration(state.elapsedMillis)),
     );
     if (state.truncated) {
       const warning = document.createElement('span');
       warning.className = 'warning';
-      warning.textContent =
-        `Truncated at ${(state.truncatedAt ?? 0).toLocaleString()} rows. ` +
-        'Export to get everything.';
+      warning.textContent = t(
+        'Truncated at {0} rows. Export to get everything.',
+        (state.truncatedAt ?? 0).toLocaleString(),
+      );
       statusBar.append(warning);
     }
   } else if (state.mode === 'update') {
@@ -436,7 +446,7 @@ function renderStatus(): void {
     statusBar.append(text(state.connectionName));
   }
   if (state.busy) {
-    statusBar.append(text('Running…'));
+    statusBar.append(text(t('Running…')));
   }
 }
 
@@ -519,11 +529,11 @@ function showContextMenu(x: number, y: number, cell: HTMLTableCellElement): void
   const columnIndex = Number(cell.dataset.column);
 
   contextMenu.append(
-    button('Copy value', () => copyText(valueForCell(cell))),
-    button('Copy column name', () => copyText(state.columns[columnIndex]?.label ?? '')),
-    button('Copy row', () => copyText(rowToText(rowIndex))),
-    button('Copy row as JSON', () => copyText(rowToJson(rowIndex))),
-    button('Copy all column names', () => copyText(state.columns.map((column) => column.label).join('\t'))),
+    button(t('Copy value'), () => copyText(valueForCell(cell))),
+    button(t('Copy column name'), () => copyText(state.columns[columnIndex]?.label ?? '')),
+    button(t('Copy row'), () => copyText(rowToText(rowIndex))),
+    button(t('Copy row as JSON'), () => copyText(rowToJson(rowIndex))),
+    button(t('Copy all column names'), () => copyText(state.columns.map((column) => column.label).join('\t'))),
   );
 
   // Positioned within the viewport, flipping when the click is near an edge.
@@ -546,8 +556,8 @@ function showDetail(value: GridValue): void {
 
   const header = document.createElement('header');
   const title = document.createElement('span');
-  title.textContent = 'Value';
-  header.append(title, spacer(), button('Close', () => closeDetail()));
+  title.textContent = t('Value');
+  header.append(title, spacer(), button(t('Close'), () => closeDetail()));
 
   const content = document.createElement('pre');
   content.textContent = value === null ? 'NULL' : formatCell(value);
@@ -566,7 +576,7 @@ async function copyText(text: string): Promise<void> {
     await navigator.clipboard.writeText(text);
   } catch (error) {
     // The clipboard API rejects without focus, which happens after a context menu closes.
-    post({ type: 'report', message: `Could not copy to the clipboard: ${String(error)}` });
+    post({ type: 'report', message: t('Could not copy to the clipboard: {0}', String(error)) });
   }
   closeContextMenu();
 }

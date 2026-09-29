@@ -10,6 +10,7 @@ import type {
   ResultColumnInfo,
 } from '../bridge/protocol';
 import { describeError, log } from '../util/logger';
+import { currentLocale, t } from '../util/i18n';
 import type { ConnectionService } from '../service/ConnectionService';
 import type { ExportService } from '../service/ExportService';
 import {
@@ -167,7 +168,7 @@ export class ResultPanel implements vscode.Disposable {
       pageSize: this.pageSize,
       elapsedMillis: result.elapsedMillis,
     };
-    this.panel.title = `Result - ${connectionName}`;
+    this.panel.title = t('Result - {0}', connectionName);
     this.post(message);
   }
 
@@ -206,7 +207,7 @@ export class ResultPanel implements vscode.Disposable {
       sqlState,
       code,
     });
-    this.panel.title = `Error - ${connectionName}`;
+    this.panel.title = t('Error - {0}', connectionName);
   }
 
   reveal(): void {
@@ -313,7 +314,7 @@ export class ResultPanel implements vscode.Disposable {
     // user is looking at - and fall back to re-running the statement when it is not.
     const connectionId = this.findConnectionId();
     if (!connectionId) {
-      void vscode.window.showErrorMessage('The connection for this result is no longer open.');
+      void vscode.window.showErrorMessage(t('The connection for this result is no longer open.'));
       return;
     }
 
@@ -397,7 +398,6 @@ async function createPanel(options: ResultPanelOptions): Promise<vscode.WebviewP
   const placement = vscode.workspace
     .getConfiguration()
     .get<string>(Config.resultOpenIn, 'below');
-
   const panelOptions: vscode.WebviewPanelOptions & vscode.WebviewOptions = {
     enableScripts: true,
     // The webview is repainted as the user scrolls, so it must not be torn down when it loses focus.
@@ -406,16 +406,14 @@ async function createPanel(options: ResultPanelOptions): Promise<vscode.WebviewP
   };
 
   if (placement === 'below') {
-    try {
-      await vscode.commands.executeCommand('workbench.action.newGroupBelow');
+    const column = await resultAreaColumn();
+    if (column !== undefined) {
       return vscode.window.createWebviewPanel(
         'open-dbclient.result',
         options.title,
-        vscode.ViewColumn.Active,
+        column,
         panelOptions,
       );
-    } catch (error) {
-      log.debug(`Could not split downwards, opening beside instead: ${String(error)}`);
     }
   }
 
@@ -425,6 +423,41 @@ async function createPanel(options: ResultPanelOptions): Promise<vscode.WebviewP
     vscode.ViewColumn.Beside,
     panelOptions,
   );
+}
+
+/**
+ * The editor group results belong in.
+ *
+ * Splitting the editor once and then reusing that group is what keeps several results in one area.
+ * Splitting per result - which is what calling `newGroupBelow` unconditionally did - turned a session
+ * of five queries into five ever-thinner columns, and the SQL being edited was squeezed into what was
+ * left. Later results therefore open as another tab in the group the first one created; the group is
+ * re-created only when it no longer exists, i.e. after the user closed it.
+ */
+let resultArea: vscode.ViewColumn | undefined;
+
+async function resultAreaColumn(): Promise<vscode.ViewColumn | undefined> {
+  if (resultArea !== undefined && columnExists(resultArea)) {
+    return resultArea;
+  }
+
+  try {
+    await vscode.commands.executeCommand('workbench.action.newGroupBelow');
+  } catch (error) {
+    log.debug(`Could not split downwards, opening beside instead: ${String(error)}`);
+    return undefined;
+  }
+
+  const created = vscode.window.tabGroups.activeTabGroup?.viewColumn;
+  if (created === undefined) {
+    return undefined;
+  }
+  resultArea = created;
+  return created;
+}
+
+function columnExists(column: vscode.ViewColumn): boolean {
+  return vscode.window.tabGroups.all.some((group) => group.viewColumn === column);
 }
 
 // ---------------------------------------------------------------------------
@@ -438,6 +471,7 @@ function toGridColumn(column: ResultColumnInfo): GridColumn {
     displayType: column.displayType,
     jdbcTypeName: column.jdbcTypeName,
     tableName: column.tableName,
+    remarks: column.remarks,
   };
 }
 
@@ -472,7 +506,7 @@ function renderHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {
   ].join('; ');
 
   return `<!DOCTYPE html>
-<html lang="en">
+<html lang="${currentLocale()}">
 <head>
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy" content="${contentSecurityPolicy}">

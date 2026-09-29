@@ -13,6 +13,8 @@ export interface GridColumn {
   readonly displayType: string;
   readonly jdbcTypeName: string;
   readonly tableName?: string;
+  /** The column's comment, shown beside the name when the database documents the column. */
+  readonly remarks?: string;
 }
 
 /** A cell value. Mirrors what the bridge produces: never an object except for SQL arrays. */

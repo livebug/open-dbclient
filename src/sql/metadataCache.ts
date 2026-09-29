@@ -150,10 +150,10 @@ export class MetadataCache {
     }
     try {
       const [schemas, allTables] = await Promise.all([
-        this.metadata.schemas(connectionId).catch(() => [] as string[]),
+        this.metadata.schemas({ connectionId, url: this.connections.urlOf(connectionId) }).catch(() => [] as string[]),
         // No type filter: the completion list should include views, and every driver labels them
         // differently, so filtering would silently hide objects on some databases.
-        this.metadata.tables({ connectionId }),
+        this.metadata.tables({ connectionId, url: this.connections.urlOf(connectionId) }),
       ]);
 
       const names = allTables.map((table) => table.name);

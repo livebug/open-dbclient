@@ -228,7 +228,11 @@ export class DatabaseTreeProvider
       return this.foldersOf(connectionId, catalog, schema);
     }
 
-    const schemas = await this.metadata.schemas(connectionId, catalog);
+    const schemas = await this.metadata.schemas({
+      connectionId,
+      catalog,
+      url: this.connections.urlOf(connectionId),
+    });
     if (schemas.length > 1) {
       return schemas.map((name) => ({
         kind: 'schema' as const,
@@ -265,6 +269,7 @@ export class DatabaseTreeProvider
       connectionId: node.connectionId,
       catalog: node.catalog,
       schema: node.schema,
+      url: this.connections.urlOf(node.connectionId),
     });
 
     const wantsViews = node.folder === 'views';

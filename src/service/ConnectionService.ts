@@ -64,6 +64,17 @@ export class ConnectionService implements vscode.Disposable {
     return this.getState(profileId).status === 'connected';
   }
 
+  /**
+   * The JDBC URL of a saved profile, or undefined when it is not saved.
+   *
+   * Exposed for the metadata rules, which match against the URL. Putting it here rather than handing the
+   * store to whoever needs it keeps the "a missing profile is not an error" decision in one place, and
+   * keeps the caller from growing a second dependency for one string.
+   */
+  urlOf(profileId: string): string | undefined {
+    return this.store.find(profileId)?.url;
+  }
+
   /** Ids of every profile currently connected. */
   connectedIds(): string[] {
     return [...this.states.entries()]

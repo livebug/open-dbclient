@@ -10,6 +10,8 @@
  * key=value); this file only reports what the user typed and renders what comes back.
  */
 
+import { setLocale, t } from '../../src/util/i18n';
+
 export interface FormValues {
   name: string;
   driverClassName: string;
@@ -55,6 +57,10 @@ interface HostMessage {
 
 const vscode = acquireVsCodeApi();
 
+// The host writes its display language into the document, which is how this script's catalog ends up
+// in the same language as the rest of the UI without a second round trip to ask for it.
+setLocale(document.documentElement.lang);
+
 const FIELDS: readonly (keyof FormValues)[] = [
   'name',
   'driverClassName',
@@ -80,25 +86,56 @@ const testButton = element<HTMLButtonElement>('test');
 const saveButton = element<HTMLButtonElement>('save');
 const cancelButton = element<HTMLButtonElement>('cancel');
 const result = element<HTMLDivElement>('result');
+const passwordInput = element<HTMLInputElement>('password');
+const togglePassword = element<HTMLButtonElement>('togglePassword');
+
+togglePassword.textContent = t('Show password');
+togglePassword.addEventListener('click', () => {
+  // Toggling the input's type rather than mirroring the value into a second field: the value is then
+  // in exactly one place, and the browser's own masking rules apply to it.
+  const revealed = passwordInput.type === 'text';
+  passwordInput.type = revealed ? 'password' : 'text';
+  togglePassword.textContent = revealed ? t('Show password') : t('Hide password');
+  togglePassword.setAttribute('aria-pressed', String(!revealed));
+  passwordInput.focus();
+});
 
 /** The name of the driver that was selected, so its hint can be shown. */
 let selectedDriver = '';
 
+/**
+ * Reads every field.
+ *
+ * The driver is a `<select>`, and this used to test `instanceof HTMLInputElement` - which is false for
+ * a select, so the driver always arrived as an empty string. The visible symptom was the bridge
+ * refusing the connection with "parameter 'driverClassName' is required" while the form appeared to
+ * have a driver chosen, because assigning `select.value` does not make it an input element.
+ */
 function readValues(): FormValues {
   const values = {} as FormValues;
   for (const field of FIELDS) {
     const input = document.getElementById(field);
-    values[field] = input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement
-      ? input.value
-      : '';
+    values[field] = readValue(input);
   }
   return values;
+}
+
+function readValue(input: HTMLElement | null): string {
+  if (input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement) {
+    return input.value;
+  }
+  if (input instanceof HTMLSelectElement) {
+    return input.value;
+  }
+  return '';
 }
 
 function fill(values: FormValues): void {
   for (const field of FIELDS) {
     const input = document.getElementById(field);
     if (input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement) {
+      input.value = values[field] ?? '';
+    } else if (input instanceof HTMLSelectElement) {
       input.value = values[field] ?? '';
     }
   }
@@ -107,7 +144,7 @@ function fill(values: FormValues): void {
 function setBusy(busy: boolean): void {
   testButton.disabled = busy;
   saveButton.disabled = busy;
-  testButton.textContent = busy ? 'Testing…' : 'Test Connection';
+  testButton.textContent = busy ? t('Testing…') : t('Test Connection');
 }
 
 function showResult(outcome: TestOutcome | undefined): void {
@@ -122,13 +159,13 @@ function applyState(state: InitialState): void {
   // names - a connection must not be silently rewritten to a different driver by opening the form.
   const options = [...state.drivers];
   if (selectedDriver && !options.some((option) => option.className === selectedDriver)) {
-    options.unshift({ className: selectedDriver, label: selectedDriver, detail: 'saved driver' });
+    options.unshift({ className: selectedDriver, label: selectedDriver, detail: t('saved driver') });
   }
   driverSelect.replaceChildren();
   if (options.length === 0) {
     const option = document.createElement('option');
     option.value = '';
-    option.textContent = 'No driver is loaded';
+    option.textContent = t('No driver is loaded');
     driverSelect.append(option);
     driverSelect.disabled = true;
   } else {
@@ -152,7 +189,7 @@ function applyState(state: InitialState): void {
     element<HTMLElement>('passwordHint').hidden = !state.hasStoredPassword;
   }
 
-  document.title = state.mode === 'add' ? 'Add Connection' : 'Edit Connection';
+  document.title = state.mode === 'add' ? t('Add Connection') : t('Edit Connection');
   element<HTMLElement>('heading').textContent = document.title;
 
   // Nothing to save until the connection has been shown to work at least once - except when editing,
@@ -233,7 +270,7 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
       break;
     case 'error':
       setBusy(false);
-      showResult({ ok: false, message: message.message ?? 'Something went wrong.' });
+      showResult({ ok: false, message: message.message ?? t('Something went wrong.') });
       break;
     default:
       break;

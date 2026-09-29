@@ -72,6 +72,21 @@ textarea {
   font-size: 0.9em;
 }
 
+/* The password field and its show/hide button share the second column. */
+.field-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.field-row input {
+  flex: 1;
+}
+
+.field-row button {
+  white-space: nowrap;
+}
+
 .buttons {
   grid-column: 1 / -1;
   display: flex;

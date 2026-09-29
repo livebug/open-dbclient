@@ -3,7 +3,13 @@
  *
  * Kept apart from the form so the same rules apply wherever the text is edited, and so they can be
  * tested without an editor.
+ *
+ * The `.ts` extension on the import is required, not stylistic: this module is imported directly by a
+ * unit test, which `node --test` loads through type stripping with ESM resolution, and that does not
+ * guess file extensions. Modules only ever reachable through a bundler can omit it.
  */
+
+import { t } from '../util/i18n.ts';
 
 /** Renders properties back into the editable text form. */
 export function formatProperties(
@@ -42,7 +48,7 @@ export function validateProperties(value: string): string | undefined {
   for (const entry of value.split(';')) {
     const trimmed = entry.trim();
     if (trimmed !== '' && !trimmed.includes('=')) {
-      return `'${trimmed}' is not key=value`;
+      return t("'{0}' is not key=value", trimmed);
     }
   }
   return undefined;
@@ -52,7 +58,9 @@ export function validateProperties(value: string): string | undefined {
 export function validateJdbcUrl(value: string): string | undefined {
   const trimmed = value.trim();
   if (trimmed === '') {
-    return 'A JDBC URL is required';
+    return t('A JDBC URL is required');
   }
-  return trimmed.toLowerCase().startsWith('jdbc:') ? undefined : "A JDBC URL starts with 'jdbc:'";
+  return trimmed.toLowerCase().startsWith('jdbc:')
+    ? undefined
+    : t("A JDBC URL starts with 'jdbc:'");
 }

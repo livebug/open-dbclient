@@ -10,6 +10,7 @@ import {
 } from '../model/connectionProperties';
 import type { ProbeResult } from '../bridge/protocol';
 import { describeError, log } from '../util/logger';
+import { currentLocale, t } from '../util/i18n';
 
 /** What the form's inputs hold, as plain strings because that is what a text field produces. */
 export interface ConnectionFormValues {
@@ -66,7 +67,7 @@ export class ConnectionFormPanel {
     return new Promise<ConnectionFormResult | undefined>((resolve) => {
       const panel = vscode.window.createWebviewPanel(
         'open-dbclient.connectionForm',
-        options.mode === 'add' ? 'Add Connection' : 'Edit Connection',
+        options.mode === 'add' ? t('Add Connection') : t('Edit Connection'),
         vscode.ViewColumn.Active,
         {
           enableScripts: true,
@@ -91,7 +92,7 @@ export class ConnectionFormPanel {
       panel.iconPath = new vscode.ThemeIcon('plug');
 
       panel.webview.onDidReceiveMessage(async (message: unknown) => {
-        const typed = message as { type?: string; values?: ConnectionFormValues };
+        const typed = message as { type?: string; driverClassName?: string; values?: ConnectionFormValues };
         switch (typed.type) {
           case 'ready':
             await panel.webview.postMessage({
@@ -106,7 +107,10 @@ export class ConnectionFormPanel {
             return;
 
           case 'driverChanged': {
-            const values = { ...options.values, driverClassName: typed.values?.driverClassName ?? '' };
+            // The driver arrives as a top-level field, not inside `values`: this handler reads the
+            // message the form actually sends, so the suggested URL is derived from the driver the
+            // user just picked rather than from the one the form opened with.
+            const values = { ...options.values, driverClassName: typed.driverClassName ?? '' };
             const suggested = options.suggestUrl?.(values);
             if (suggested) {
               await panel.webview.postMessage({ type: 'suggestedUrl', url: suggested });
@@ -133,7 +137,7 @@ export class ConnectionFormPanel {
                 type: 'testResult',
                 outcome: {
                   ok: true,
-                  message: `Connected in ${result.connectMillis} ms. ${result.capabilities.description}`,
+                  message: t('Connected in {0} ms. {1}', result.connectMillis, result.capabilities.description),
                 },
               });
             } catch (error) {
@@ -158,7 +162,7 @@ export class ConnectionFormPanel {
               // arrives anyway, from a stale panel or a script that bypasses the button.
               await panel.webview.postMessage({
                 type: 'error',
-                message: 'Test the connection before saving it.',
+                message: t('Test the connection before saving it.'),
               });
               return;
             }
@@ -187,7 +191,12 @@ export class ConnectionFormPanel {
 /** The first thing wrong with the form, or undefined when it may be submitted. */
 function firstProblem(values: ConnectionFormValues, requireName: boolean): string | undefined {
   if (requireName && values.name.trim() === '') {
-    return 'A name is required';
+    return t('A name is required');
+  }
+  // Checked here rather than left to the bridge, whose message for a missing driver names a protocol
+  // field ("parameter 'driverClassName' is required") that the user never typed and cannot find.
+  if (values.driverClassName.trim() === '') {
+    return t('Choose a JDBC driver.');
   }
   return validateJdbcUrl(values.url) ?? validateProperties(values.properties);
 }
@@ -244,47 +253,50 @@ function renderHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {
   ].join('; ');
 
   return `<!DOCTYPE html>
-<html lang="en">
+<html lang="${currentLocale()}">
 <head>
 <meta charset="UTF-8">
 <meta http-equiv="Content-Security-Policy" content="${contentSecurityPolicy}">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link href="${styleUri}" rel="stylesheet">
-<title>Connection</title>
+<title>${t('Connection')}</title>
 </head>
 <body>
-  <h1 id="heading">Connection</h1>
-  <p class="lede">Test the connection before saving it. Nothing is stored until it works.</p>
+  <h1 id="heading">${t('Connection')}</h1>
+  <p class="lede">${t('Test the connection before saving it. Nothing is stored until it works.')}</p>
   <form id="form" autocomplete="off">
-    <label for="driverClassName">Driver</label>
+    <label for="driverClassName">${t('Driver')}</label>
     <select id="driverClassName" name="driverClassName"></select>
     <div class="hint" id="driverHint"></div>
 
-    <label for="name">Name</label>
-    <input id="name" name="name" type="text" spellcheck="false" placeholder="A label for this connection">
+    <label for="name">${t('Name')}</label>
+    <input id="name" name="name" type="text" spellcheck="false" placeholder="${t('A label for this connection')}">
 
-    <label for="url">JDBC URL</label>
+    <label for="url">${t('JDBC URL')}</label>
     <input id="url" name="url" type="text" spellcheck="false" placeholder="jdbc:postgresql://host:5432/db">
 
-    <label for="user">User</label>
-    <input id="user" name="user" type="text" spellcheck="false" placeholder="Leave empty when the URL carries the credentials">
+    <label for="user">${t('User')}</label>
+    <input id="user" name="user" type="text" spellcheck="false" placeholder="${t('Leave empty when the URL carries the credentials')}">
 
-    <label for="password">Password</label>
-    <input id="password" name="password" type="password" spellcheck="false">
-    <div class="hint" id="passwordHint" hidden>Leave empty to keep the stored password.</div>
+    <label for="password">${t('Password')}</label>
+    <div class="field-row">
+      <input id="password" name="password" type="password" spellcheck="false">
+      <button type="button" id="togglePassword" class="secondary" aria-pressed="false"></button>
+    </div>
+    <div class="hint" id="passwordHint" hidden>${t('Leave empty to keep the stored password.')}</div>
 
-    <label for="properties">Properties</label>
+    <label for="properties">${t('Properties')}</label>
     <textarea id="properties" name="properties" spellcheck="false" placeholder="key=value;key=value"></textarea>
-    <div class="hint">Extra JDBC properties, separated by semicolons.</div>
+    <div class="hint">${t('Extra JDBC properties, separated by semicolons.')}</div>
 
     <div class="buttons">
-      <button type="button" id="test">Test Connection</button>
-      <button type="submit" id="save" disabled>Save</button>
+      <button type="button" id="test">${t('Test Connection')}</button>
+      <button type="submit" id="save" disabled>${t('Save')}</button>
       <div id="spacer"></div>
       <span id="result" role="status" aria-live="polite"></span>
-      <button type="button" id="cancel" class="secondary">Cancel</button>
+      <button type="button" id="cancel" class="secondary">${t('Cancel')}</button>
     </div>
-    <div class="hint" id="saveHint" hidden>Test the connection to enable Save.</div>
+    <div class="hint" id="saveHint" hidden>${t('Test the connection to enable Save.')}</div>
   </form>
   <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>

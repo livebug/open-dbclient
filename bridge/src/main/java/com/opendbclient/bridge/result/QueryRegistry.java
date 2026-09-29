@@ -30,10 +30,27 @@ public final class QueryRegistry implements AutoCloseable {
     /** Byte budget used until the extension reports the user's preference. */
     private static final long DEFAULT_MAX_CACHE_BYTES = 512L * 1024 * 1024;
 
+    /**
+     * How many finished statements are remembered for the health panel.
+     *
+     * <p>Enough to answer "what has this thing been running" while looking at a problem, and few enough
+     * that the list is never the reason a snapshot is large. The full history lives in the client that
+     * asked for the statements; this is the bridge's own recent memory.
+     */
+    private static final int RECENT_STATEMENT_LIMIT = 20;
+
     private final Map<String, ActiveQuery> running = new ConcurrentHashMap<>();
     private final Map<String, QueryResultStore> results = new ConcurrentHashMap<>();
     private final Map<String, String> ownerOfResult = new ConcurrentHashMap<>();
     private final AtomicLong querySequence = new AtomicLong();
+
+    /**
+     * The last few finished statements, newest last.
+     *
+     * <p>Guarded by its own monitor rather than being a concurrent collection: it is a deque that is both
+     * appended to and trimmed, and the trimming is the part that has to be atomic with the append.
+     */
+    private final java.util.Deque<Map<String, Object>> recentStatements = new java.util.ArrayDeque<>();
 
     private final AtomicLong completed = new AtomicLong();
     private final AtomicLong failed = new AtomicLong();
@@ -174,6 +191,51 @@ public final class QueryRegistry implements AutoCloseable {
 
     public void recordFailure() {
         failed.incrementAndGet();
+    }
+
+    /**
+     * Remembers one finished statement.
+     *
+     * <p>Called for every statement that reaches a database, successful or not, because the question this
+     * answers - "which SQL was it running when this happened?" - is asked most often about the one that
+     * failed. It is also the only place a statement is visible to whoever is looking at the health panel:
+     * the bridge does not otherwise keep the text of what it ran.
+     *
+     * @param rows number of rows returned or affected; negative when the statement produced no count
+     */
+    public void recordStatement(
+            String connectionId,
+            String sqlSummary,
+            long elapsedMillis,
+            long rows,
+            boolean succeeded) {
+        Map<String, Object> entry = Json.obj(
+                "timestamp", System.currentTimeMillis(),
+                "connectionId", connectionId == null ? "" : connectionId,
+                "sql", sqlSummary,
+                "elapsedMillis", elapsedMillis,
+                "rows", rows,
+                "succeeded", succeeded);
+        synchronized (recentStatements) {
+            recentStatements.addLast(entry);
+            while (recentStatements.size() > RECENT_STATEMENT_LIMIT) {
+                recentStatements.removeFirst();
+            }
+        }
+    }
+
+    /**
+     * The statements remembered so far, newest first.
+     *
+     * <p>Newest first because the interesting one is almost always the last thing that ran, and a list that
+     * has to be read to the bottom to find it is a list that gets skimmed instead.
+     */
+    public List<Map<String, Object>> recentStatementsPayload() {
+        synchronized (recentStatements) {
+            List<Map<String, Object>> payload = new ArrayList<>(recentStatements);
+            java.util.Collections.reverse(payload);
+            return payload;
+        }
     }
 
     /** Snapshot for the health panel. */

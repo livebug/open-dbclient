@@ -88,7 +88,10 @@ public final class HealthService implements AutoCloseable {
                 "connectionCount", connections.openCount(),
                 "poolSummaries", poolSummaries(),
                 "cache", cache(),
-                "queries", queries.metricsPayload());
+                "queries", queries.metricsPayload(),
+                // Only in the snapshot, never in the periodic push: the statements are read once, when
+                // somebody opens the report to find out what happened.
+                "recentStatements", queries.recentStatementsPayload());
     }
 
     /**

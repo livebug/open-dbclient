@@ -189,11 +189,27 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (event.affectsConfiguration(Config.codeLens)) {
         codeLens.refresh();
       }
+      if (
+        event.affectsConfiguration(Config.metadataQueries) ||
+        event.affectsConfiguration(Config.metadataTimeoutSeconds)
+      ) {
+        // The rules decide what the tree and the completion cache are given, so a change to them has to
+        // reach both - otherwise the setting appears to do nothing until the window is reloaded.
+        metadataCache.invalidate();
+        tree.refresh();
+      }
     }),
 
     vscode.commands.registerCommand(Commands.showVariables, () => {
       syncVariables(vscode.window.activeTextEditor?.document);
       void VariablesView.reveal();
+    }),
+
+    // The manual counterpart to the automatic tracking: a script whose placeholders never registered - or
+    // a view opened before the tracking ran - can be asked to read them again.
+    vscode.commands.registerCommand(Commands.refreshVariables, () => {
+      syncVariables(vscode.window.activeTextEditor?.document);
+      variablesView.rescan();
     }),
 
     // Result panels cannot survive the process that holds their rows.

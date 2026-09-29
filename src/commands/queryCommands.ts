@@ -18,12 +18,13 @@ import {
   unresolvedPlaceholders,
 } from '../sql/actionTemplate';
 import { ResultPanel } from '../webview/ResultPanel';
+import { metadataQueryExamples, parseMetadataQueries } from '../sql/metadataQueries';
 import {
   isDestructive,
   resolveStatementToRun,
   splitStatements,
 } from '../util/sqlStatementParser';
-import { describeError, log } from '../util/logger';
+import { describeError, log, summarizeSql } from '../util/logger';
 import { t } from '../util/i18n';
 import type { CommandDependencies } from './types';
 
@@ -54,6 +55,7 @@ export function registerQueryCommands(dependencies: CommandDependencies): vscode
       dependencies.tree.refresh();
       void vscode.window.showInformationMessage(t('Schema information refreshed.'));
     }),
+    register(Commands.installMetadataQueries, () => installMetadataQueries()),
     register(Commands.insertHistoryEntry, (node) => insertHistory(asHistoryNode(node))),
     register(Commands.deleteHistoryEntry, (node) =>
       deleteHistory(dependencies, asHistoryNode(node)),
@@ -66,6 +68,59 @@ function asNode(value: unknown): DatabaseTreeNode | undefined {
   return typeof value === 'object' && value !== null && 'kind' in value
     ? (value as DatabaseTreeNode)
     : undefined;
+}
+
+/**
+ * Writes the example metadata queries into the user's settings.
+ *
+ * Offered rather than made the default: replacing the source of every tree on every PostgreSQL-compatible
+ * connection is a large change to make on somebody's behalf, and the rules are dialect SQL that the user
+ * should be able to read before it applies to them.
+ */
+async function installMetadataQueries(): Promise<void> {
+  const configuration = vscode.workspace.getConfiguration();
+  const existing = configuration.get<unknown>(Config.metadataQueries);
+  const current = Array.isArray(existing) ? existing : [];
+  const { queries } = parseMetadataQueries(current);
+
+  const examples = metadataQueryExamples().filter(
+    (example) => !queries.some((rule) => rule.id === example.id),
+  );
+  if (examples.length === 0) {
+    void vscode.window.showInformationMessage(
+      t('The example metadata queries are already configured.'),
+    );
+    return;
+  }
+
+  const confirmed = await vscode.window.showInformationMessage(
+    t(
+      "Add {0} example metadata query rule(s) to your user settings? They answer the tree's schema and table reads for PostgreSQL-compatible connections with information_schema instead of the driver, which is usually much faster.",
+      examples.length,
+    ),
+    { modal: true },
+    t('Add'),
+  );
+  if (confirmed !== t('Add')) {
+    return;
+  }
+
+  // User settings rather than workspace: what a driver does is a property of the driver, not of the folder
+  // that happens to be open.
+  await configuration.update(
+    Config.metadataQueries,
+    [...current, ...examples],
+    vscode.ConfigurationTarget.Global,
+  );
+  log.info(`Added ${examples.length} example metadata query rule(s) to the user settings`);
+
+  const open = await vscode.window.showInformationMessage(
+    t('Added {0} example metadata query rule(s).', examples.length),
+    t('Open Settings'),
+  );
+  if (open === t('Open Settings')) {
+    await vscode.commands.executeCommand('workbench.action.openSettings', Config.metadataQueries);
+  }
 }
 
 /**
@@ -252,6 +307,10 @@ async function runSingleStatement(
   const queryId = nextQueryId();
   panel.setRunning(sql, profileLabel(profile), queryId);
 
+  // Logged before the request rather than after the result, because the useful moment is while the
+  // statement is still running: that is when the question "what is it doing?" gets asked.
+  log.info(`Running on '${profileLabel(profile)}': ${summarizeSql(sql)}`);
+
   const startedAt = Date.now();
   try {
     const result = await dependencies.bridge.request<QueryExecuteResult>(
@@ -287,6 +346,11 @@ async function runSingleStatement(
     } else {
       panel.setUpdate(result.updateCount ?? 0, result.elapsedMillis, sql, profileLabel(profile));
     }
+
+    log.info(
+      `Finished in ${result.elapsedMillis} ms on '${profileLabel(profile)}': ` +
+        `${result.hasResultSet ? `${(result.totalRows ?? 0).toLocaleString()} row(s)` : `${result.updateCount ?? 0} row(s) affected`}`,
+    );
 
     // A statement that changed the schema invalidates what the tree is showing.
     if (/\b(create|drop|alter|rename)\b/i.test(sql)) {
@@ -347,6 +411,7 @@ async function runTablePreview(
   });
   const queryId = nextQueryId();
   panel.setRunning(sql, profileLabel(profile), queryId);
+  log.info(`Running on '${profileLabel(profile)}': ${summarizeSql(sql)}`);
 
   try {
     const result = await dependencies.bridge.request<QueryExecuteResult>(
@@ -355,8 +420,13 @@ async function runTablePreview(
       { timeoutMs: 0 },
     );
     panel.setResult(result, sql, profileLabel(profile));
+    log.info(
+      `Finished in ${result.elapsedMillis} ms on '${profileLabel(profile)}': ` +
+        `${(result.totalRows ?? 0).toLocaleString()} row(s)`,
+    );
   } catch (error) {
     panel.setError(error, sql, profileLabel(profile));
+    log.warn(`Failed on '${profileLabel(profile)}': ${summarizeSql(sql)} - ${describeError(error)}`);
   }
 }
 
@@ -787,6 +857,7 @@ async function showDdlFromQuery(
 
   const sql = expandAction(rule.sql, context);
   const queryId = nextQueryId();
+  log.info(`Reading the DDL of '${path}' with ${rule.id}: ${summarizeSql(sql)}`);
 
   const result = await vscode.window.withProgress(
     { location: vscode.ProgressLocation.Notification, title: t('Reading the DDL of {0}', path) },

@@ -3,6 +3,7 @@ package com.opendbclient.bridge;
 import com.opendbclient.bridge.export.CsvExportTests;
 import com.opendbclient.bridge.json.JsonTests;
 import com.opendbclient.bridge.metadata.DdlOptionsTests;
+import com.opendbclient.bridge.result.QueryRegistryTests;
 import com.opendbclient.bridge.rpc.ProtocolTests;
 
 /** Entry point for `node scripts/build-bridge.mjs --test`. */
@@ -21,6 +22,8 @@ public final class BridgeTests {
         DdlOptionsTests.register(runner);
         System.out.println("CSV export");
         CsvExportTests.register(runner);
+        System.out.println("Query registry");
+        QueryRegistryTests.register(runner);
 
         System.out.println();
         System.exit(runner.runAll());

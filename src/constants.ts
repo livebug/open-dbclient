@@ -63,6 +63,8 @@ export const Commands = {
   filterTree: `${EXTENSION_ID}.filterTree`,
   clearFilter: `${EXTENSION_ID}.clearFilter`,
   showVariables: `${EXTENSION_ID}.showVariables`,
+  refreshVariables: `${EXTENSION_ID}.refreshVariables`,
+  installMetadataQueries: `${EXTENSION_ID}.installMetadataQueries`,
   runCustomAction: `${EXTENSION_ID}.runCustomAction`,
 } as const;
 
@@ -110,6 +112,8 @@ export const Config = {
   ddlIncludeIndexes: `${EXTENSION_ID}.ddl.includeIndexes`,
   ddlQuoteIdentifiers: `${EXTENSION_ID}.ddl.quoteIdentifiers`,
   ddlQueries: `${EXTENSION_ID}.ddl.queries`,
+  metadataQueries: `${EXTENSION_ID}.metadata.queries`,
+  metadataTimeoutSeconds: `${EXTENSION_ID}.metadata.timeoutSeconds`,
   customActions: `${EXTENSION_ID}.actions`,
   intellisenseEnabled: `${EXTENSION_ID}.intellisense.enabled`,
   intellisensePrefetchTables: `${EXTENSION_ID}.intellisense.prefetchTables`,

@@ -59,6 +59,32 @@ class Logger {
 export const log = new Logger();
 
 /**
+ * Characters of a statement kept in a log line.
+ *
+ * Longer than the bridge's metrics summary because the question a log line answers is "which statement was
+ * this?", and a WHERE clause cut off at the point where it starts to matter answers nothing.
+ */
+const SQL_LOG_LIMIT = 500;
+
+/**
+ * Collapses a statement into one log line.
+ *
+ * One line, because a multi-line statement in a log channel pushes out everything around it and makes an
+ * otherwise scannable log unreadable. A cut statement says so, and says how much there was, so a truncated
+ * one cannot be mistaken for a complete one that happens to end mid-word.
+ *
+ * Note that the statement is logged as it was sent: values substituted from script variables appear here.
+ * The channel is local to the window, and the log level decides whether it is written at all.
+ */
+export function summarizeSql(sql: string, limit = SQL_LOG_LIMIT): string {
+  const collapsed = sql.replace(/\s+/g, ' ').trim();
+  if (collapsed.length <= limit) {
+    return collapsed;
+  }
+  return `${collapsed.slice(0, limit)}... (${collapsed.length} chars total)`;
+}
+
+/**
  * Renders an unknown thrown value for a user-facing message.
  *
  * TypeScript allows throwing anything, and a rejected promise from a child process surfaces as a

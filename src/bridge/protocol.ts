@@ -348,6 +348,18 @@ export interface CachedResultSummary {
   idleMillis: number;
 }
 
+/** One statement the bridge has run recently, for the health report. */
+export interface RecentStatement {
+  timestamp: number;
+  connectionId: string;
+  /** Collapsed to one line and cut to a readable length by the bridge. */
+  sql: string;
+  elapsedMillis: number;
+  /** Rows returned or affected; -1 when the statement failed before producing a count. */
+  rows: number;
+  succeeded: boolean;
+}
+
 /**
  * A point-in-time view of the bridge's operational state.
  *
@@ -394,6 +406,13 @@ export interface HealthSnapshot {
     slowestMillis: number;
     slowestQuery?: string;
   };
+  /**
+   * The last few statements the bridge ran, newest first.
+   *
+   * Read from a full snapshot only: the periodic push leaves them out, because they are read once, when
+   * somebody opens the report to find out what happened, and not on every tick.
+   */
+  recentStatements?: RecentStatement[];
 }
 
 /** Parses a duration into a compact, human-readable form. */

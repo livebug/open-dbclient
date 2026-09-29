@@ -171,6 +171,18 @@
         "icon": "$(symbol-parameter)"
       },
       {
+        "command": "open-dbclient.refreshVariables",
+        "title": "%cmd.refreshVariables%",
+        "category": "DB Client",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "open-dbclient.installMetadataQueries",
+        "title": "%cmd.installMetadataQueries%",
+        "category": "DB Client",
+        "icon": "$(wand)"
+      },
+      {
         "command": "open-dbclient.runCustomAction",
         "title": "%cmd.runCustomAction%",
         "category": "DB Client",
@@ -310,6 +322,11 @@
     ],
     "menus": {
       "view/title": [
+        {
+          "command": "open-dbclient.refreshVariables",
+          "when": "view == open-dbclient.variables",
+          "group": "navigation@1"
+        },
         {
           "command": "open-dbclient.addConnection",
           "when": "view == open-dbclient.connections",
@@ -572,6 +589,46 @@
           "type": "string",
           "default": "\\$\\{\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*\\}",
           "markdownDescription": "%config.variablePattern.description%"
+        },
+        "open-dbclient.metadata.queries": {
+          "type": "array",
+          "default": [],
+          "markdownDescription": "%config.metadataQueries.description%",
+          "items": {
+            "type": "object",
+            "required": [
+              "kind",
+              "sql"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "%config.metadataQueries.id%"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "schemas",
+                  "tables"
+                ],
+                "description": "%config.metadataQueries.kind%"
+              },
+              "match": {
+                "type": "string",
+                "description": "%config.metadataQueries.match%"
+              },
+              "sql": {
+                "type": "string",
+                "description": "%config.metadataQueries.sql%"
+              }
+            }
+          }
+        },
+        "open-dbclient.metadata.timeoutSeconds": {
+          "type": "number",
+          "default": 30,
+          "minimum": 0,
+          "markdownDescription": "%config.metadataTimeoutSeconds.description%"
         },
         "open-dbclient.ddl.queries": {
           "type": "array",

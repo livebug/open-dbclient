@@ -18,6 +18,7 @@ import com.opendbclient.bridge.result.ActiveQuery;
 import com.opendbclient.bridge.result.QueryResultStore;
 import com.opendbclient.bridge.result.ResultColumn;
 import com.opendbclient.bridge.result.RowReader;
+import com.opendbclient.bridge.result.SqlSummary;
 import com.opendbclient.bridge.rpc.Protocol;
 import com.opendbclient.bridge.rpc.RequestContext;
 import com.opendbclient.bridge.rpc.RpcException;
@@ -94,6 +95,12 @@ public final class QueryHandlers {
         ActiveQuery active = new ActiveQuery(queryId, connectionId, ctx);
         services.queries().beginRunning(active);
 
+        // One line naming the statement before it runs, so a user watching the log knows what the bridge is
+        // doing while it is doing it - which is the question that matters when something takes minutes.
+        // Debug rather than info: this is developer output, and the extension writes its own line at info
+        // with the connection's user-facing name instead.
+        Log.debug("Executing on '%s': %s", connectionId, logSummary(sql));
+
         long startNanos = System.nanoTime();
         try {
             Execution execution;
@@ -113,6 +120,13 @@ public final class QueryHandlers {
 
             long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos);
             services.queries().recordCompletion(elapsedMillis, summarize(sql));
+            services.queries().recordStatement(
+                    connectionId,
+                    summarize(sql),
+                    elapsedMillis,
+                    execution.hasResultSet() ? execution.store().rowCount() : execution.updateCount(),
+                    true);
+            Log.debug("Done on '%s' in %d ms: %s", connectionId, elapsedMillis, summarize(sql));
 
             if (!execution.hasResultSet()) {
                 return Json.obj(
@@ -141,6 +155,15 @@ public final class QueryHandlers {
             return payload;
         } catch (Throwable failure) {
             services.queries().recordFailure();
+            // Recorded as well as counted: the statement that failed is the one somebody will go looking
+            // for, and a failure count on its own says nothing about which SQL produced it.
+            services.queries().recordStatement(
+                    connectionId,
+                    summarize(sql),
+                    TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos),
+                    -1L,
+                    false);
+            Log.warn("Statement failed on '%s': %s (%s)", connectionId, summarize(sql), failure.getMessage());
             throw failure;
         } finally {
             services.queries().endRunning(queryId);
@@ -267,8 +290,18 @@ public final class QueryHandlers {
 
     /** Keeps the recorded slow-query summary to something that fits in a log line. */
     private static String summarize(String sql) {
-        String collapsed = sql.replaceAll("\\s+", " ").trim();
-        return collapsed.length() <= 160 ? collapsed : collapsed.substring(0, 160) + "...";
+        return SqlSummary.of(sql, SqlSummary.METRICS_LIMIT);
+    }
+
+    /**
+     * Collapses a statement into one log line, keeping far more of it than the metrics summary does.
+     *
+     * Longer because the two answer different questions: the summary goes into a table cell beside a
+     * duration, while a log line exists to tell somebody which statement was running - and cutting it off
+     * before the interesting part (a WHERE clause, the table being written to) would defeat the purpose.
+     */
+    private static String logSummary(String sql) {
+        return SqlSummary.of(sql, SqlSummary.LOG_LIMIT);
     }
 
     private static void closeQuietly(Statement statement) {

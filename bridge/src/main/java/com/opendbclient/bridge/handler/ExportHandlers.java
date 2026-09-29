@@ -21,6 +21,7 @@ import com.opendbclient.bridge.result.ActiveQuery;
 import com.opendbclient.bridge.result.QueryResultStore;
 import com.opendbclient.bridge.result.ResultColumn;
 import com.opendbclient.bridge.result.RowReader;
+import com.opendbclient.bridge.result.SqlSummary;
 import com.opendbclient.bridge.rpc.Protocol;
 import com.opendbclient.bridge.rpc.RequestContext;
 import com.opendbclient.bridge.rpc.RpcException;
@@ -86,8 +87,9 @@ public final class ExportHandlers {
         }
 
         long startNanos = System.nanoTime();
-        long exportedRows;
-        long unquotedFields;
+        long exportedRows = -1L;
+        long unquotedFields = 0L;
+        boolean succeeded = false;
         try (ExportTarget exporter = ExportService.create(format, target, options, tableName)) {
             if (queryId != null) {
                 exportedRows = exportStoredResult(services, queryId, exporter, ctx);
@@ -98,11 +100,27 @@ public final class ExportHandlers {
             // Read before the exporter is closed, and after every row has been written: this is the
             // earliest point at which the whole file's worth of decisions has been made.
             unquotedFields = exporter.unquotedFields();
+            succeeded = true;
         } catch (IOException | SQLException | RuntimeException failure) {
             // A half-written export is worse than none: the user cannot tell whether the file is
             // complete, and will assume it is.
             deleteQuietly(target);
             throw failure;
+        } finally {
+            // An export runs the statement just as a query does, so it belongs in the same list of "what has
+            // this bridge been running" - otherwise a slow export looks like the bridge doing nothing at all.
+            services.queries().recordStatement(
+                    Json.str(params, "connectionId"),
+                    SqlSummary.of(sql, SqlSummary.METRICS_LIMIT),
+                    TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos),
+                    succeeded ? exportedRows : -1L,
+                    succeeded);
+            if (!succeeded) {
+                Log.warn(
+                        "Export from '%s' failed: %s",
+                        Json.str(params, "connectionId"),
+                        SqlSummary.of(sql, SqlSummary.METRICS_LIMIT));
+            }
         }
 
         long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos);

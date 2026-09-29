@@ -76,6 +76,10 @@ export const ZH_CN: Record<string, string> = {
 
   // ---- variables view ----
   'SQL Script Variables': 'SQL 脚本变量',
+  '{0} placeholder(s)': '{0} 个占位符',
+  '{0} variable(s)': '{0} 个变量',
+  'Script variables': '脚本变量',
+  'Click to edit their values.': '点击编辑它们的值。',
   'This script has no ${NAME} placeholders.': '当前脚本里没有 ${NAME} 形式的占位符。',
   'Values are substituted before the statement runs. A placeholder with no value stops the run.':
     '这些值会在语句执行前替换进去;有占位符没填值会拒绝执行。',
@@ -146,6 +150,12 @@ export const ZH_CN: Record<string, string> = {
     '执行中 **{0}** · 已完成 **{1}** · 失败 **{2}** · 已取消 **{3}**',
   'Average duration **{0} ms** · slowest **{1} ms**': '平均耗时 **{0} 毫秒** · 最慢 **{1} 毫秒**',
   'Slowest statement:': '最慢的语句:',
+  'Recent statements': '近期执行的语句',
+  '| Time | Connection | Result | Duration | Rows | Statement |':
+    '| 时间 | 连接 | 结果 | 耗时 | 行数 | 语句 |',
+  '| --- | --- | --- | ---: | ---: | --- |': '| --- | --- | --- | ---: | ---: | --- |',
+  ok: '成功',
+  failed: '失败',
   'Could not read bridge health: {0}': '无法读取桥的健康数据:{0}',
 
   // ---- extension & commands ----
@@ -187,6 +197,13 @@ export const ZH_CN: Record<string, string> = {
   'The JDBC bridge has been restarted.': 'JDBC 桥已重启。',
   'Could not restart the bridge: {0}': '无法重启 JDBC 桥:{0}',
   'Schema information refreshed.': '表结构信息已刷新。',
+  'The example metadata queries are already configured.': '示例元数据 SQL 已经配置过了。',
+  "Add {0} example metadata query rule(s) to your user settings? They answer the tree's schema and table reads for PostgreSQL-compatible connections with information_schema instead of the driver, which is usually much faster.":
+    '把 {0} 条示例元数据 SQL 规则写进用户设置?它们让连接树的模式/表查询对兼容 PostgreSQL 的连接改用 information_schema,而不是走驱动 —— 通常快得多。',
+  Add: '添加',
+  'Added {0} example metadata query rule(s).': '已添加 {0} 条示例元数据 SQL 规则。',
+  'Reading the database metadata took longer than {0} s, so the extension stopped waiting. The database may still be working on it. A faster query can be given in the metadata.queries setting, and metadata.timeoutSeconds raises the limit.':
+    '读取数据库元数据超过 {0} 秒,插件已停止等待(数据库那边可能还在跑)。可以在 `metadata.queries` 里给一条更快的 SQL,或调大 `metadata.timeoutSeconds`。',
   'Open Settings': '打开设置',
   'No custom actions are defined yet.': '还没有定义任何自定义动作。',
   'None of the {0} custom action(s) applies to a {1}.': '{0} 个自定义动作都不适用于 {1}。',

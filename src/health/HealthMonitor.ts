@@ -188,7 +188,6 @@ function renderTooltip(snapshot: HealthSnapshot): string {
  */
 function renderReport(snapshot: HealthSnapshot): string {
   const { memory, garbageCollector, threads, server, cache, queries, poolSummaries } = snapshot;
-
   const lines: string[] = [
     `# ${t('JDBC bridge health')}`,
     '',
@@ -302,7 +301,35 @@ function renderReport(snapshot: HealthSnapshot): string {
     lines.push(t('Slowest statement:'), '', '```sql', queries.slowestQuery, '```', '');
   }
 
+  const recentStatements = snapshot.recentStatements ?? [];
+  if (recentStatements.length > 0) {
+    lines.push(
+      `## ${t('Recent statements')}`,
+      '',
+      t('| Time | Connection | Result | Duration | Rows | Statement |'),
+      t('| --- | --- | --- | ---: | ---: | --- |'),
+      ...recentStatements.map(
+        (entry) =>
+          `| ${new Date(entry.timestamp).toLocaleTimeString()} | ${entry.connectionId || '-'} | ` +
+          `${entry.succeeded ? t('ok') : t('failed')} | ${entry.elapsedMillis} ms | ` +
+          `${entry.rows >= 0 ? entry.rows.toLocaleString() : '-'} | ${tableCell(entry.sql)} |`,
+      ),
+      '',
+    );
+  }
+
   return lines.join('\n');
+}
+
+/**
+ * Makes a statement safe to place in a Markdown table cell.
+ *
+ * A pipe inside a table cell ends the cell, and SQL contains pipes more often than one would like (`||`
+ * for concatenation, `|` for bitwise or). The backslash escape is part of Markdown's table syntax, so
+ * this is the difference between a readable row and a mangled table.
+ */
+function tableCell(value: string): string {
+  return value.replace(/\|/g, '\\|');
 }
 
 function formatBytes(bytes: number): string {

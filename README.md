@@ -227,8 +227,11 @@ WHERE created_at >= ${V_DATE}
 
 - 变量在**一个固定的页签里编辑**,不再随窗口大小抢编辑器的位置,也不会在输入时重建整页
   (输入过程中光标不会跳、界面不闪)
-- **DB Client: Show Query Variables** 可以把该页签切到前台;因为某个变量没填值而拒绝执行时也会
-  自动切过去并把光标放到没填的输入框
+- **看不到变量时怎么办**:活动脚本里有占位符时状态栏会出现 `N 个变量`(点它就把页签切到前台),
+  页签标题上也有数量徽标
+- **DB Client: Show Query Variables** 切到前台;**DB Client: Rescan Script Variables**(或页签标题栏的
+  刷新按钮)会**重新扫描当前脚本** —— 占位符没被识别出来时用它
+- 因为某个变量没填值而拒绝执行时,也会自动切过去并把光标放到没填的输入框
 - 变量样式可自定义:设置 `variables.pattern` 为正则(**需带一个捕获组**作为变量名)。不写捕获组
   时整个匹配当作变量名
 - 变量值按**工作区**保存,同一个 `${V_DATE}` 在各脚本里含义一致
@@ -261,6 +264,30 @@ WHERE created_at >= ${V_DATE}
 - **Show Columns**: 列名、类型、长度、是否可空、默认值、注释
 - **Show Indexes**: 索引名、列、是否唯一
 - **Generate DDL**: 见下
+
+#### 树里的模式/表查询也可以自己写(推荐给慢库)
+
+连接树的模式与表列表走的是 `DatabaseMetaData`。有些驱动把它实现成了巨大的目录查询 —— 兼容
+PostgreSQL 的库上可能要几分钟,而等价的 `information_schema` 查询毫秒级返回。设 `metadata.queries`
+可以把你自己的 SQL 放进去:
+
+```jsonc
+{ "kind": "tables", "match": "jdbc:postgresql:*",
+  "sql": "SELECT table_schema AS TABLE_SCHEM, table_name AS TABLE_NAME, table_type AS TABLE_TYPE\n  FROM information_schema.tables WHERE table_schema = '${schema}'" }
+```
+
+- `kind` 是 `schemas` 或 `tables`;`match` 是对连接 URL 的 glob,第一条命中生效,没命中就回到驱动元数据
+  (所以默认行为不变)
+- 占位符 `${catalog}`、`${schema}`、`${namePattern}`;填不出来时**这条规则根本不执行** ——
+  去掉一个过滤条件换来的是错的行,不是更少的行
+- 结果按列名读,用的是 JDBC 对同一批数据使用的名字(表列表:`TABLE_SCHEM`/`TABLE_NAME`/`TABLE_TYPE`/`REMARKS`;
+  模式列表:`TABLE_SCHEM`),把你的列别名成这些名字即可
+- 规则执行失败、或返回的行里没有能识别的名字列,日志会提示一次,并**回落**到驱动元数据 ——
+  写错的 SELECT 不该让整棵树变空
+- **DB Client: Install Metadata SQL Examples** 会把 PostgreSQL/openGauss 的示例规则写进用户设置
+  (安装后一键就有默认可改),而不是替所有人默认打开
+- `metadata.timeoutSeconds`(默认 30)控制等多久就放弃。驱动内部的目录查询**无法取消**,
+  所以超时只意味着插件不再等 —— 提示里会直接告诉你用上面这条设置换一条更快的 SQL
 
 #### 取 DDL 的 SQL 可以自己写(推荐)
 
@@ -386,6 +413,15 @@ Markdown 报告,包含:
 - 保留最近 500 条,JSONL 存储
 - 可插入回编辑器、单条删除、清空
 
+### 执行了哪些 SQL(排查用)
+
+- 每次从编辑器/树执行的语句都会写到 **DB Client 输出通道**,一行一条:连接名 + 折叠成单行的 SQL,
+  以及耗时与行数。超过 500 字符会截断并注明原长度。**日志详细程度由 `logLevel` 控制**
+  (默认 `info` 就能看到事件与错误;要看桥内部的逐条执行记录调到 `debug`)
+- 注意:SQL 是**替换变量之后**的样子,所以脚本变量的值会出现在日志里(通道只在本窗口内)
+- **JDBC 健康报告**里多了一张「近期执行的语句」表:最近 20 条、最新的在最上面,含连接、成功/失败、
+  耗时、行数与语句本身。它在打开报告时读取完整快照,不随每 2 秒的推送重复传输
+
 ---
 
 ## 命令与快捷键
@@ -408,6 +444,8 @@ Markdown 报告,包含:
 | Select Top 200 Rows | 从树上直接预览表数据 |
 | Run Custom Action... | 在表/视图/列上跑自定义 SQL 动作 |
 | Show Query Variables | 把「SQL 脚本变量」页签切到前台 |
+| Rescan Script Variables | 重新扫描当前脚本的 `${...}` 占位符 |
+| Install Metadata SQL Examples | 把示例的元数据 SQL 规则写进用户设置 |
 | **导出** | |
 | Export Result... | 导出当前结果网格 |
 | Export Table... | 不查询,直接导出整张表 |
@@ -469,6 +507,13 @@ Markdown 报告,包含:
 | `intellisense.prefetchTables` | boolean | `true` | 连接后后台预取表名 |
 | `intellisense.columnCacheLimit` | number | `500` | 列信息缓存的表数量上限 |
 
+### 元数据读取
+
+| 设置 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `metadata.queries` | array | `[]` | 自己写的模式/表查询 SQL,见[树里的模式/表查询也可以自己写](#树里的模式表查询也可以自己写推荐给慢库) |
+| `metadata.timeoutSeconds` | number | `30` | 等元数据读取多久后放弃;`0` 表示一直等 |
+
 ### 健康监控
 
 | 设置 | 类型 | 默认 | 说明 |
@@ -493,8 +538,7 @@ Markdown 报告,包含:
 
 | 设置 | 类型 | 默认 | 说明 |
 |---|---|---|---|
-| `ddl.queries` | array | `[]` | 自己写的取 DDL 语句,按连接 URL 匹配,见[取 DDL 的 SQL 可以自己写](#取-ddl-的-sql-可以自己写推荐) |
-| `ddl.ifNotExists` | boolean | `false` | 内置生成器:生成 `CREATE TABLE IF NOT EXISTS` |
+| `ddl.queries` | array | `[]` | 自己写的取 DDL 语句,按连接 URL 匹配,见[取 DDL 的 SQL 可以自己写](#取-ddl-的-sql-可以自己写推荐) || `ddl.ifNotExists` | boolean | `false` | 内置生成器:生成 `CREATE TABLE IF NOT EXISTS` |
 | `ddl.indent` | string | `"    "` | 内置生成器:列定义的缩进;空格、tab 或留空都行 |
 | `ddl.includeIndexes` | boolean | `true` | 内置生成器:是否在表后追 `CREATE INDEX` |
 | `ddl.quoteIdentifiers` | boolean | `true` | 内置生成器:标识符是否加数据库上报的引号字符 |
@@ -576,7 +620,7 @@ npm run icon            # 重新生成扩展图标   → media/icon/icon.png
 ### 测试
 
 ```bash
-npm test        # 类型检查 + 文档与清单一致性 + 50 项 Java 测试 + 114 项 TS 单测(无需数据库)
+npm test        # 类型检查 + 文档与清单一致性 + 54 项 Java 测试 + 131 项 TS 单测(无需数据库)
 npm run verify  # 上面全部 + 构建桥 + 冒烟检查
 ```
 

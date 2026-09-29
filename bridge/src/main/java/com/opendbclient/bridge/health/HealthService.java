@@ -157,6 +157,7 @@ public final class HealthService implements AutoCloseable {
                     "garbageCollector", garbageCollector(),
                     "threads", threads(),
                     "server", serverMetrics(),
+                    "connectionCount", connections.openCount(),
                     "poolSummaries", poolSummaries(),
                     "cache", cache(),
                     "queries", queries.metricsPayload()));

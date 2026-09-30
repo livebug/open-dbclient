@@ -10,6 +10,7 @@ import com.opendbclient.bridge.handler.MetadataHandlers;
 import com.opendbclient.bridge.handler.QueryHandlers;
 import com.opendbclient.bridge.handler.SystemHandlers;
 import com.opendbclient.bridge.health.HealthService;
+import com.opendbclient.bridge.health.MetadataMetrics;
 import com.opendbclient.bridge.log.Log;
 import com.opendbclient.bridge.result.QueryRegistry;
 import com.opendbclient.bridge.rpc.RpcServer;
@@ -30,11 +31,12 @@ public final class BridgeServices implements AutoCloseable {
     private final DriverLoader driverLoader = new DriverLoader();
     private final ConnectionRegistry connections = new ConnectionRegistry(driverLoader);
     private final QueryRegistry queries = new QueryRegistry();
+    private final MetadataMetrics metadata = new MetadataMetrics();
     private final HealthService health;
 
     public BridgeServices(RpcServer server) {
         this.server = server;
-        this.health = new HealthService(connections, queries, server);
+        this.health = new HealthService(connections, queries, metadata, server);
     }
 
     /** Driver loading and the driver classpath. */
@@ -50,6 +52,11 @@ public final class BridgeServices implements AutoCloseable {
     /** Running queries and their spilled results. */
     public QueryRegistry queries() {
         return queries;
+    }
+
+    /** What the metadata reads behind the tree and the grid have cost. */
+    public MetadataMetrics metadata() {
+        return metadata;
     }
 
     /** Metrics collection and push scheduling. */

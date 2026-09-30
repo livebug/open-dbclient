@@ -154,6 +154,14 @@ export const ZH_CN: Record<string, string> = {
   '| Time | Connection | Result | Duration | Rows | Statement |':
     '| 时间 | 连接 | 结果 | 耗时 | 行数 | 语句 |',
   '| --- | --- | --- | ---: | ---: | --- |': '| --- | --- | --- | ---: | ---: | --- |',
+  'Metadata calls': '元数据调用',
+  'Reading a table list, the columns of a table or a DDL statement goes through `DatabaseMetaData`. On some drivers those are large catalog queries, so the statement can finish in milliseconds while the reads around it take minutes. Listed by total time.':
+    '表列表、表的列、建表语句都要走 `DatabaseMetaData`。有些驱动把这些实现成了巨大的目录查询,于是语句本身几毫秒就结束,围着它的读取却要几分钟。下表按总耗时排序。',
+  '| Call | Count | Total | Average | Failures |': '| 调用 | 次数 | 总耗时 | 平均 | 失败 |',
+  '| --- | ---: | ---: | ---: | ---: |': '| --- | ---: | ---: | ---: | ---: |',
+  'Slowest reads:': '最慢的几次读取:',
+  '| Duration | Connection | Result | Call | Subject |': '| 耗时 | 连接 | 结果 | 调用 | 对象 |',
+  '| ---: | --- | --- | --- | --- |': '| ---: | --- | --- | --- | --- |',
   ok: '成功',
   failed: '失败',
   'Could not read bridge health: {0}': '无法读取桥的健康数据:{0}',

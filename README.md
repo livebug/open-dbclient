@@ -421,6 +421,10 @@ Markdown 报告,包含:
 - 桥进程:JVM 堆使用、线程数、运行时长
 - 连接池:每个连接的 `total / idle / checkedOut` 与借用时长
 - 查询与结果:运行中查询数、缓存的结果集数量与占用、被淘汰数量
+- **元数据调用**:按 `tables`/`columns`/`schemas`/`indexes`/`ddl` 分组统计次数、总耗时、平均耗时、
+  失败数,以及**最慢的几次读取分别是对哪个对象**(`columns public.orders  12.3 s`)。这是“语句很快、
+  界面却很慢”那类问题的答案 —— 慢的往往不是 SQL,而是围着它的 `DatabaseMetaData` 读取;
+  知道是哪一类、哪张表,才谈得上换掉它(`metadata.queries`)或关掉它(`result.columnRemarks`)
 - 驱动:已加载的 jar 与驱动类
 
 > 监控**只覆盖 JDBC 层与桥进程自身**,不含数据库服务端指标 —— 那需要各家的私有 SQL,和
@@ -640,12 +644,12 @@ npm run icon            # 重新生成扩展图标   → media/icon/icon.png
 ### 测试
 
 ```bash
-npm test        # 类型检查 + 文档/文案检查 + 57 项 Java 测试 + 153 项 TS 单测(无需数据库)
+npm test        # 类型检查 + 文档/文案检查 + 62 项 Java 测试 + 153 项 TS 单测(无需数据库)
 npm run verify  # 上面全部 + 构建桥 + 冒烟检查
 ```
 
 冒烟检查需要一个放了驱动的目录。不传目录时它会打印提示并**直接跳过**(退出码 0),
-所以别把它当成跑过了 —— 想真正跑那 128 项检查要这样:
+所以别把它当成跑过了 —— 想真正跑那 131 项检查要这样:
 
 ```bash
 mkdir -p /tmp/dbclient-drivers && cd /tmp/dbclient-drivers

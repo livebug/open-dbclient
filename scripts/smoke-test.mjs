@@ -580,6 +580,17 @@ async function main() {
       check(typeof snapshot.result?.server?.requestsHandled === 'number', 'request counters are reported',
         snapshot.result?.server?.requestsHandled);
 
+      // The metadata reads earlier in this run went through `DatabaseMetaData`, so the report has to show
+      // them: it is the answer to "which read is slow" when the statement itself looked fine.
+      const metadataCalls = snapshot.result?.metadata?.calls ?? [];
+      check(metadataCalls.length > 0, 'metadata reads are counted by call', JSON.stringify(metadataCalls));
+      check(
+        metadataCalls.every((entry) => typeof entry.call === 'string' && entry.count >= 1 && entry.millis >= 0),
+        'each entry names the call, how often and how long',
+        JSON.stringify(metadataCalls[0]),
+      );
+      check((snapshot.result?.metadata?.slowest ?? []).length > 0, 'the slowest reads are listed');
+
       const configured = await bridge.call('system.configure', { resultMaxCacheBytes: 1024 * 1024 });
       check(configured.error === null, 'system.configure applies the cache budget', configured.error?.message);
       const afterConfigure = await bridge.call('health.snapshot');

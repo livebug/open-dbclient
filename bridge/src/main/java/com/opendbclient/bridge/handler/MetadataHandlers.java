@@ -5,6 +5,7 @@ import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 import com.opendbclient.bridge.BridgeServices;
 import com.opendbclient.bridge.json.Json;
@@ -46,21 +47,21 @@ public final class MetadataHandlers {
 
         server.register(Protocol.METADATA_CATALOGS, (params, ctx) -> {
             String connectionId = Json.requireStr(params, "connectionId");
-            return withConnection(services, connectionId, connection -> Json.obj(
+            return withConnection(services, connectionId, "catalogs", "", connection -> Json.obj(
                     "catalogs", new ArrayList<Object>(MetadataProvider.catalogs(connection))));
         });
 
         server.register(Protocol.METADATA_SCHEMAS, (params, ctx) -> {
             String connectionId = Json.requireStr(params, "connectionId");
             String catalog = optional(params, "catalog");
-            return withConnection(services, connectionId, connection -> Json.obj(
+            return withConnection(services, connectionId, "schemas", catalog, connection -> Json.obj(
                     "catalog", catalog,
                     "schemas", new ArrayList<Object>(MetadataProvider.schemas(connection, catalog))));
         });
 
         server.register(Protocol.METADATA_TABLE_TYPES, (params, ctx) -> {
             String connectionId = Json.requireStr(params, "connectionId");
-            return withConnection(services, connectionId, connection -> Json.obj(
+            return withConnection(services, connectionId, "tableTypes", "", connection -> Json.obj(
                     "tableTypes", new ArrayList<Object>(MetadataProvider.tableTypes(connection))));
         });
 
@@ -79,7 +80,7 @@ public final class MetadataHandlers {
                     ? null
                     : requestedTypes.toArray(String[]::new);
 
-            return withConnection(services, connectionId, connection -> {
+            return withConnection(services, connectionId, "tables", qualified(catalog, schema), connection -> {
                 List<TableInfo> tables = MetadataProvider.tables(
                         connection, catalog, schema, namePattern, types);
                 List<Object> payloads = new ArrayList<>(tables.size());
@@ -100,7 +101,9 @@ public final class MetadataHandlers {
             String schema = optional(params, "schema");
             String table = Json.requireStr(params, "table");
 
-            return withConnection(services, connectionId, connection -> {
+            // The object goes in the subject: "columns" taking twelve seconds is only actionable once it
+            // says which table's columns.
+            return withConnection(services, connectionId, "columns", qualified(schema, table), connection -> {
                 List<ColumnInfo> columns = MetadataProvider.columns(connection, catalog, schema, table);
                 List<Object> payloads = new ArrayList<>(columns.size());
                 for (ColumnInfo column : columns) {
@@ -116,7 +119,7 @@ public final class MetadataHandlers {
             String schema = optional(params, "schema");
             String table = Json.requireStr(params, "table");
 
-            return withConnection(services, connectionId, connection -> {
+            return withConnection(services, connectionId, "indexes", qualified(schema, table), connection -> {
                 List<IndexInfo> indexes = MetadataProvider.indexes(connection, catalog, schema, table);
                 List<Object> payloads = new ArrayList<>(indexes.size());
                 for (IndexInfo index : indexes) {
@@ -135,7 +138,7 @@ public final class MetadataHandlers {
             // Presentation only; the statement is still derived entirely from JDBC metadata.
             DdlBuilder.Options options = DdlBuilder.Options.from(Json.mapValue(params, "options"));
 
-            return withConnection(services, connectionId, connection ->
+            return withConnection(services, connectionId, "ddl", qualified(schema, table), connection ->
                     Json.obj(
                             "table", table,
                             "schema", schema,
@@ -148,16 +151,51 @@ public final class MetadataHandlers {
     // ------------------------------------------------------------------
 
     /**
-     * Runs a metadata action against a pooled connection.
+     * Runs a metadata action against a pooled connection, and records what it cost.
      *
      * <p>Using the pool's borrow/release pair rather than a raw connection keeps this path subject
      * to the same timeouts and health accounting as every other request.
+     *
+     * <p>Timed here rather than inside {@link MetadataProvider} because this is the boundary: the number
+     * includes waiting for a pooled connection and reading whatever the driver had to read, which is the
+     * number a user comparing two databases is asking about. Every read goes through this one method, so a
+     * new one cannot be added without being measured.
      */
     private static Object withConnection(
             BridgeServices services,
             String connectionId,
+            String call,
+            String subject,
             ConnectionPool.SqlAction<Object> action) throws SQLException {
-        return services.connections().require(connectionId).withConnection(BORROW_TIMEOUT_MILLIS, action);
+
+        long startNanos = System.nanoTime();
+        try {
+            Object payload = services.connections().require(connectionId)
+                    .withConnection(BORROW_TIMEOUT_MILLIS, action);
+            services.metadata().record(
+                    connectionId,
+                    call,
+                    subject,
+                    TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos),
+                    true);
+            return payload;
+        } catch (SQLException | RuntimeException failure) {
+            services.metadata().record(
+                    connectionId,
+                    call,
+                    subject,
+                    TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos),
+                    false);
+            throw failure;
+        }
+    }
+
+    /** `schema.table`, or whichever of the two there is. Only used to name a call in the metrics. */
+    private static String qualified(String first, String second) {
+        if (first == null || first.isBlank()) {
+            return second == null ? "" : second;
+        }
+        return second == null || second.isBlank() ? first : first + '.' + second;
     }
 
     /**

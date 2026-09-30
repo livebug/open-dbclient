@@ -1,6 +1,7 @@
 package com.opendbclient.bridge;
 
 import com.opendbclient.bridge.export.CsvExportTests;
+import com.opendbclient.bridge.health.MetadataMetricsTests;
 import com.opendbclient.bridge.json.JsonTests;
 import com.opendbclient.bridge.metadata.DdlOptionsTests;
 import com.opendbclient.bridge.result.CommentCacheTests;
@@ -27,6 +28,8 @@ public final class BridgeTests {
         QueryRegistryTests.register(runner);
         System.out.println("Column comment cache");
         CommentCacheTests.register(runner);
+        System.out.println("Metadata metrics");
+        MetadataMetricsTests.register(runner);
 
         System.out.println();
         System.exit(runner.runAll());

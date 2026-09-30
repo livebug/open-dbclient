@@ -360,6 +360,40 @@ export interface RecentStatement {
   succeeded: boolean;
 }
 
+/** One kind of metadata read, totalled over the session. */
+export interface MetadataCallTotals {
+  /** `tables`, `columns`, `schemas`, `indexes`, `ddl`, `catalogs`, `tableTypes`. */
+  call: string;
+  count: number;
+  millis: number;
+  averageMillis: number;
+  failures: number;
+}
+
+/** One metadata read, with the object it was about. */
+export interface MetadataCall {
+  call: string;
+  /** `schema.table`, or whichever of the two the read had. May be empty. */
+  subject: string;
+  connectionId: string;
+  millis: number;
+  succeeded: boolean;
+}
+
+/**
+ * What the metadata reads have cost.
+ *
+ * Kept apart from the query timings because the expensive part of a slow screen is often not the
+ * statement: on some drivers a table's columns or comments are read with a large catalog query, so the
+ * SQL finishes in milliseconds while the introspection around it takes minutes.
+ */
+export interface MetadataMetrics {
+  /** Totals per call, largest total first. */
+  calls: MetadataCallTotals[];
+  /** The slowest individual reads so far, heaviest first. */
+  slowest: MetadataCall[];
+}
+
 /**
  * A point-in-time view of the bridge's operational state.
  *
@@ -413,6 +447,13 @@ export interface HealthSnapshot {
    * somebody opens the report to find out what happened, and not on every tick.
    */
   recentStatements?: RecentStatement[];
+  /**
+   * Metadata costs, by call.
+   *
+   * Snapshot only, for the same reason as the statements: this is read when somebody opens the report to
+   * find out why something was slow, not on every tick.
+   */
+  metadata?: MetadataMetrics;
 }
 
 /** Parses a duration into a compact, human-readable form. */

@@ -318,6 +318,44 @@ function renderReport(snapshot: HealthSnapshot): string {
     );
   }
 
+  const metadata = snapshot.metadata;
+  if (metadata && metadata.calls.length > 0) {
+    // Its own section rather than a note under the queries, because it is the answer when the queries look
+    // fine and the screen was still slow: the statement took milliseconds and the reads around it did not.
+    lines.push(
+      `## ${t('Metadata calls')}`,
+      '',
+      t(
+        'Reading a table list, the columns of a table or a DDL statement goes through `DatabaseMetaData`. On some drivers those are large catalog queries, so the statement can finish in milliseconds while the reads around it take minutes. Listed by total time.',
+      ),
+      '',
+      t('| Call | Count | Total | Average | Failures |'),
+      t('| --- | ---: | ---: | ---: | ---: |'),
+      ...metadata.calls.map(
+        (entry) =>
+          `| ${entry.call} | ${entry.count.toLocaleString()} | ${entry.millis.toLocaleString()} ms | ` +
+          `${entry.averageMillis.toLocaleString()} ms | ${entry.failures.toLocaleString()} |`,
+      ),
+      '',
+    );
+
+    if (metadata.slowest.length > 0) {
+      // The individual reads, because "columns is slow" is only actionable once it says which table.
+      lines.push(
+        t('Slowest reads:'),
+        '',
+        t('| Duration | Connection | Result | Call | Subject |'),
+        t('| ---: | --- | --- | --- | --- |'),
+        ...metadata.slowest.map(
+          (entry) =>
+            `| ${entry.millis.toLocaleString()} ms | ${entry.connectionId || '-'} | ` +
+            `${entry.succeeded ? t('ok') : t('failed')} | ${entry.call} | ${tableCell(entry.subject) || '-'} |`,
+        ),
+        '',
+      );
+    }
+  }
+
   return lines.join('\n');
 }
 

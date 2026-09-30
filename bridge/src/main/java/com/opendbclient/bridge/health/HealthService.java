@@ -54,6 +54,7 @@ public final class HealthService implements AutoCloseable {
 
     private final ConnectionRegistry connections;
     private final QueryRegistry queries;
+    private final MetadataMetrics metadata;
     private final RpcServer server;
 
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(
@@ -69,9 +70,14 @@ public final class HealthService implements AutoCloseable {
     private volatile EventSink sink;
     private volatile long intervalMillis;
 
-    public HealthService(ConnectionRegistry connections, QueryRegistry queries, RpcServer server) {
+    public HealthService(
+            ConnectionRegistry connections,
+            QueryRegistry queries,
+            MetadataMetrics metadata,
+            RpcServer server) {
         this.connections = connections;
         this.queries = queries;
+        this.metadata = metadata;
         this.server = server;
     }
 
@@ -91,7 +97,8 @@ public final class HealthService implements AutoCloseable {
                 "queries", queries.metricsPayload(),
                 // Only in the snapshot, never in the periodic push: the statements are read once, when
                 // somebody opens the report to find out what happened.
-                "recentStatements", queries.recentStatementsPayload());
+                "recentStatements", queries.recentStatementsPayload(),
+                "metadata", metadata.payload());
     }
 
     /**

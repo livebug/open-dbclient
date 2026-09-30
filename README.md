@@ -764,13 +764,13 @@ src/
 
 ```bash
 # 1. 更新版本号与 CHANGELOG
-npm version 0.3.0 --no-git-tag-version
+npm version 0.4.0 --no-git-tag-version
 
 # 2. 提交
-git add -A && git commit -m "chore: release 0.3.0"
+git add -A && git commit -m "chore: release 0.4.0"
 
 # 3. 打 tag 并推送 —— 这一步会触发自动发版
-git tag v0.3.0
+git tag v0.4.0
 git push origin main --tags
 ```
 

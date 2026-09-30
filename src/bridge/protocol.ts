@@ -133,6 +133,8 @@ export interface DatabaseCapabilities {
   catalogSeparator?: string;
   supportsCatalogs: boolean;
   supportsSchemas: boolean;
+  /** The catalog this connection is pointed at, absent when the driver reports none. */
+  currentCatalog?: string | null;
   storesUpperCaseIdentifiers: boolean;
   storesLowerCaseIdentifiers: boolean;
   storesMixedCaseIdentifiers: boolean;

@@ -220,19 +220,23 @@ export class DatabaseTreeProvider
       return [];
     }
     const { id } = node.profile;
+    const connectionName = node.profile.name;
+    const url = this.connections.urlOf(id);
+    const capabilities = this.connections.capabilities(id);
 
-    const catalogs = await this.metadata.catalogs({
-      connectionId: id,
-      url: this.connections.urlOf(id),
-    });
+    // Only ask when the answer can be used. A driver that reports catalogs are meaningless to its reads -
+    // PostgreSQL, openGauss - would have its list thrown away, so calling `getCatalogs()` there is a
+    // metadata round trip for nothing, and a round trip is what the slow reports are about. It also means a
+    // `catalogs` rule cannot apply on those drivers: there is no level for it to change.
+    const catalogs =
+      capabilities?.supportsCatalogs === true
+        ? await this.metadata.catalogs({ connectionId: id, connectionName, url })
+        : [];
 
     // The driver decides whether this level is usable, not the length of the list: PostgreSQL reports every
     // database in the cluster and then ignores the catalog argument, so the level would show the connected
     // database's tables under three different names. See `catalogLevel` for the measurements.
-    const level = catalogLevel(
-      catalogs,
-      this.connections.capabilities(id)?.supportsCatalogs ?? false,
-    );
+    const level = catalogLevel(catalogs, capabilities?.supportsCatalogs === true, this.connections.catalogOf(id));
     if (level.show) {
       return catalogs.map((catalog) => ({
         kind: 'catalog' as const,
@@ -241,8 +245,8 @@ export class DatabaseTreeProvider
       }));
     }
 
-    // No usable level: read the schemas straight off the connection, which is where the catalog the user
-    // connected to already lives.
+    // No usable level: read the schemas straight off the connection, naming the catalog it is already
+    // pointed at so a rule that filters on `${catalog}` still gets a value.
     return this.childrenOfScope(id, level.catalog, undefined);
   }
 
@@ -259,6 +263,7 @@ export class DatabaseTreeProvider
     const schemas = await this.metadata.schemas({
       connectionId,
       catalog,
+      connectionName: this.connections.displayNameOf(connectionId),
       url: this.connections.urlOf(connectionId),
     });
     if (schemas.length > 1) {
@@ -297,6 +302,7 @@ export class DatabaseTreeProvider
       connectionId: node.connectionId,
       catalog: node.catalog,
       schema: node.schema,
+      connectionName: this.connections.displayNameOf(node.connectionId),
       url: this.connections.urlOf(node.connectionId),
     });
 
@@ -333,6 +339,7 @@ export class DatabaseTreeProvider
       catalog: node.catalog,
       schema: node.schema,
       table: node.table.name,
+      connectionName: this.connections.displayNameOf(node.connectionId),
       url: this.connections.urlOf(node.connectionId),
     };
 
@@ -379,6 +386,7 @@ export class DatabaseTreeProvider
       catalog: node.catalog,
       schema: node.schema,
       table: node.table,
+      connectionName: this.connections.displayNameOf(node.connectionId),
       url: this.connections.urlOf(node.connectionId),
     });
     return indexes

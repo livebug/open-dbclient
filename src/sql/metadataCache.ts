@@ -175,6 +175,7 @@ export class MetadataCache {
       const columns: ColumnInfo[] = await this.metadata.columns({
         connectionId,
         table,
+        connectionName: this.connections.displayNameOf(connectionId),
         url: this.connections.urlOf(connectionId),
       });
       return columns.map((column) => ({

@@ -47,10 +47,14 @@ export interface CatalogLevel {
  * @param catalogs the names the driver reported, in the order it reported them
  * @param driverSupportsCatalogs `supportsCatalogsInDataManipulation` - whether a catalog name means
  *                              anything to the driver when it reads
+ * @param currentCatalog the catalog the connection itself is pointed at, used when the level is skipped so
+ *                       that a rule's `${catalog}` is still filled. A read that names no catalog at all
+ *                       would refuse such a rule and fall back to the driver - slowly.
  */
 export function catalogLevel(
   catalogs: readonly string[],
   driverSupportsCatalogs: boolean,
+  currentCatalog?: string,
 ): CatalogLevel {
   if (driverSupportsCatalogs && catalogs.length > 1) {
     return { show: true };
@@ -59,5 +63,5 @@ export function catalogLevel(
   // One catalog is a level with a single redundant node in it, so it is skipped and the name is carried
   // down instead. Several catalogs that the driver cannot read inside - the PostgreSQL case - are skipped
   // for a stronger reason: there is nothing behind them.
-  return { show: false, catalog: catalogs.length === 1 ? catalogs[0] : undefined };
+  return { show: false, catalog: catalogs.length === 1 ? catalogs[0] : currentCatalog };
 }

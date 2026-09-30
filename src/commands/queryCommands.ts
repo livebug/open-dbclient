@@ -717,6 +717,7 @@ async function showColumns(
       catalog: table.catalog,
       schema: table.schema,
       table: table.table.name,
+      connectionName: dependencies.connections.displayNameOf(table.connectionId),
       url: dependencies.connections.urlOf(table.connectionId),
     });
 
@@ -764,6 +765,7 @@ async function showIndexes(
       catalog: table.catalog,
       schema: table.schema,
       table: table.table.name,
+      connectionName: dependencies.connections.displayNameOf(table.connectionId),
       url: dependencies.connections.urlOf(table.connectionId),
     });
 
@@ -890,7 +892,7 @@ async function showDdlFromQuery(
 
   const sql = expandAction(rule.sql, context);
   const queryId = nextQueryId();
-  log.info(`Reading the DDL of '${path}' with ${rule.id}: ${summarizeSql(sql)}`);
+  log.info(`Reading the DDL of '${path}' on '${profileLabel(profile)}' with ${rule.id}: ${summarizeSql(sql)}`);
 
   const result = await vscode.window.withProgress(
     { location: vscode.ProgressLocation.Notification, title: t('Reading the DDL of {0}', path) },

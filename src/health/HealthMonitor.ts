@@ -7,6 +7,7 @@ import type { HealthSnapshot } from '../bridge/protocol';
 import { formatUptime } from '../bridge/protocol';
 import { describeError, log } from '../util/logger';
 import { t } from '../util/i18n';
+import type { ConnectionService } from '../service/ConnectionService';
 import type { VirtualDocumentProvider } from '../util/VirtualDocuments';
 
 /** Fraction of the heap in use above which the status bar starts warning. */
@@ -34,6 +35,14 @@ export class HealthMonitor implements vscode.Disposable {
   constructor(
     private readonly bridge: JdbcBridge,
     private readonly virtualDocuments: VirtualDocumentProvider,
+    /**
+     * Used to turn the ids the bridge reports into the names a user recognises.
+     *
+     * The bridge knows a connection only by the identifier the extension gave it, and an identifier is not
+     * something anybody can act on: "Production" is, and the first question a report is opened to answer is
+     * which connection was slow.
+     */
+    private readonly connections: ConnectionService,
   ) {
     this.statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 99);
     this.statusBar.command = 'open-dbclient.showHealth';
@@ -113,7 +122,11 @@ export class HealthMonitor implements vscode.Disposable {
       }
     }
 
-    await this.virtualDocuments.show('jdbc-bridge-health', 'md', renderReport(snapshot));
+    await this.virtualDocuments.show(
+      'jdbc-bridge-health',
+      'md',
+      renderReport(snapshot, (id) => this.connectionLabel(id)),
+    );
   }
 
   dispose(): void {
@@ -124,10 +137,22 @@ export class HealthMonitor implements vscode.Disposable {
     this.disposables.length = 0;
   }
 
+  /**
+   * The connection's name, or its id when the profile is gone.
+   *
+   * Falling back to the id rather than to a dash: the id is at least something to search the log for, and a
+   * report that hides which connection a line was about is a report nobody can act on.
+   */
+  private connectionLabel(connectionId: string | undefined): string {
+    if (!connectionId) {
+      return '-';
+    }
+    return this.connections.displayNameOf(connectionId) ?? connectionId;
+  }
+
   private updateStatusBar(): void {
     const show = vscode.workspace.getConfiguration().get<boolean>(Config.healthShowStatusBar, true);
-    if (!show || !this.latest) {
-      this.statusBar.hide();
+    if (!show || !this.latest) {      this.statusBar.hide();
       return;
     }
 
@@ -186,7 +211,7 @@ function renderTooltip(snapshot: HealthSnapshot): string {
  * Markdown rather than a bespoke webview because every action a user wants on a report - select,
  * search, copy, compare two of them - already works in an editor.
  */
-function renderReport(snapshot: HealthSnapshot): string {
+function renderReport(snapshot: HealthSnapshot, label: (connectionId?: string) => string): string {
   const { memory, garbageCollector, threads, server, cache, queries, poolSummaries } = snapshot;
   const lines: string[] = [
     `# ${t('JDBC bridge health')}`,
@@ -310,7 +335,7 @@ function renderReport(snapshot: HealthSnapshot): string {
       t('| --- | --- | --- | ---: | ---: | --- |'),
       ...recentStatements.map(
         (entry) =>
-          `| ${new Date(entry.timestamp).toLocaleTimeString()} | ${entry.connectionId || '-'} | ` +
+          `| ${new Date(entry.timestamp).toLocaleTimeString()} | ${label(entry.connectionId)} | ` +
           `${entry.succeeded ? t('ok') : t('failed')} | ${entry.elapsedMillis} ms | ` +
           `${entry.rows >= 0 ? entry.rows.toLocaleString() : '-'} | ${tableCell(entry.sql)} |`,
       ),
@@ -348,7 +373,7 @@ function renderReport(snapshot: HealthSnapshot): string {
         t('| ---: | --- | --- | --- | --- |'),
         ...metadata.slowest.map(
           (entry) =>
-            `| ${entry.millis.toLocaleString()} ms | ${entry.connectionId || '-'} | ` +
+            `| ${entry.millis.toLocaleString()} ms | ${label(entry.connectionId)} | ` +
             `${entry.succeeded ? t('ok') : t('failed')} | ${entry.call} | ${tableCell(entry.subject) || '-'} |`,
         ),
         '',

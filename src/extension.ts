@@ -59,7 +59,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const tree = new DatabaseTreeProvider(store, connections, metadata);
   const historyTree = new HistoryTreeProvider(history);
   const binding = new SqlEditorBinding(store);
-  const health = new HealthMonitor(bridge, virtualDocuments);
+  const health = new HealthMonitor(bridge, virtualDocuments, connections);
   const metadataCache = new MetadataCache(metadata, connections);
   const completion = new SqlCompletionProvider(metadataCache, binding, connections);
   const codeLens = new SqlCodeLensProvider();

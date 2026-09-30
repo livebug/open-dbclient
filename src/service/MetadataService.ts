@@ -51,6 +51,14 @@ export interface ObjectReference {
  */
 export interface MetadataRequest extends ObjectReference {
   readonly url?: string;
+  /**
+   * The connection's name as the user knows it, used in log lines only.
+   *
+   * Passed in rather than looked up here because the callers that have a profile are the ones that know its
+   * name, and the id is not something a person reading the output channel can identify. Absent means the log
+   * line falls back to the id.
+   */
+  readonly connectionName?: string;
 }
 
 export interface TableRequest extends MetadataRequest {
@@ -69,6 +77,8 @@ export interface TableReference extends ObjectReference {
    * which is the behaviour of every connection that has no rule.
    */
   readonly url?: string;
+  /** The connection's name as the user knows it, for the log. See {@link MetadataRequest.connectionName}. */
+  readonly connectionName?: string;
 }
 
 /**
@@ -97,7 +107,9 @@ export class MetadataService {
       return fromRule;
     }
 
-    log.debug(`Reading the catalogs of ${request.connectionId} from the driver's metadata`);
+    log.debug(
+      `Reading the catalogs of ${request.connectionName ?? request.connectionId} from the driver's metadata`,
+    );
     const result = await this.request<{ catalogs: string[] }>(Methods.metadataCatalogs, {
       connectionId: request.connectionId,
     });
@@ -113,6 +125,7 @@ export class MetadataService {
     const params: Record<string, unknown> = { connectionId: request.connectionId };
     putIfPresent(params, 'catalog', request.catalog);
 
+    log.debug(`Reading the schemas${onConnection(request.connectionName)} from the driver's metadata`);
     const result = await this.request<{ schemas: string[] }>(Methods.metadataSchemas, params);
     return result.schemas ?? [];
   }
@@ -124,7 +137,7 @@ export class MetadataService {
       return fromRule;
     }
 
-    log.debug(`Reading the table types of ${request.connectionId} from the driver's metadata`);
+    log.debug(`Reading the table types of ${request.connectionName ?? request.connectionId} from the driver's metadata`);
     const result = await this.request<{ tableTypes: string[] }>(Methods.metadataTableTypes, {
       connectionId: request.connectionId,
     });
@@ -147,6 +160,9 @@ export class MetadataService {
       params.types = [...request.types];
     }
 
+    log.debug(
+      `Reading the tables of ${subjectOf(request) || 'the connection'}${onConnection(request.connectionName)} from the driver's metadata`,
+    );
     const result = await this.request<{ tables: TableInfo[] }>(Methods.metadataTables, params);
     return result.tables ?? [];
   }
@@ -160,7 +176,7 @@ export class MetadataService {
     // Logged at debug because a tree expansion asks for these constantly, and the answer to "why is this
     // slow" is in the health report's timings rather than in a line per table. It is here for the other
     // question: whether the rule the user configured is being used at all.
-    log.debug(`Reading the columns of ${subjectOf(reference)} from the driver's metadata`);
+    log.debug(`Reading the columns of ${subjectOf(reference)}${onConnection(reference.connectionName)} from the driver's metadata`);
     const result = await this.request<{ columns: ColumnInfo[] }>(
       Methods.metadataColumns,
       withTable(reference),
@@ -174,7 +190,7 @@ export class MetadataService {
       return fromRule;
     }
 
-    log.debug(`Reading the indexes of ${subjectOf(reference)} from the driver's metadata`);
+    log.debug(`Reading the indexes of ${subjectOf(reference)}${onConnection(reference.connectionName)} from the driver's metadata`);
     const result = await this.request<{ indexes: IndexInfo[] }>(
       Methods.metadataIndexes,
       withTable(reference),
@@ -297,7 +313,7 @@ export class MetadataService {
       return undefined;
     }
 
-    const subject = `${kind} of ${subjectOf(reference)}`;
+    const subject = `${kind} of ${subjectOf(reference)}${onConnection(reference.connectionName)}`;
     const result = await this.runRule(
       rule,
       reference.connectionId,
@@ -406,7 +422,12 @@ export class MetadataService {
     const scope = [values.catalog, values.schema, values.table]
       .filter((part): part is string => part !== undefined && part !== '')
       .join('.');
-    const result = await this.runRule(rule, request.connectionId, values, scope === '' ? kind : `${kind} of ${scope}`);
+    const result = await this.runRule(
+      rule,
+      request.connectionId,
+      values,
+      `${scope === '' ? kind : `${kind} of ${scope}`}${onConnection(request.connectionName)}`,
+    );
     if (!result) {
       return undefined;
     }
@@ -453,7 +474,8 @@ export class MetadataService {
         schema: request.schema,
         namePattern: request.namePattern,
       },
-      `tables${request.schema || request.catalog ? ` of ${request.schema || request.catalog}` : ''}`,
+      `tables${request.schema || request.catalog ? ` of ${request.schema || request.catalog}` : ''}` +
+        onConnection(request.connectionName),
     );
     if (!result) {
       return undefined;
@@ -516,6 +538,17 @@ function subjectOf(reference: { schema?: string; table?: string }): string {
   return [reference.schema, reference.table]
     .filter((part): part is string => part !== undefined && part !== '')
     .join('.');
+}
+
+/**
+ * ` on 'Production'`, or nothing when the caller had no name to give.
+ *
+ * Every line this service logs about a read says which connection it was for: the url and the id are not
+ * things a person reading the output channel recognises, and "which connection was that?" is the first
+ * question a log is read to answer.
+ */
+function onConnection(name: string | undefined): string {
+  return name === undefined || name === '' ? '' : ` on '${name}'`;
 }
 
 /**

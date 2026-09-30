@@ -84,6 +84,8 @@ export class ExportService {
     sql?: string;
     suggestedName: string;
     tableName?: string;
+    /** The connection's name as the user knows it, for the log line. */
+    connectionName?: string;
   }): Promise<void> {
     if (!source.queryId && !source.sql) {
       void vscode.window.showErrorMessage(t('There is nothing to export.'));
@@ -200,7 +202,7 @@ export class ExportService {
       }
 
       log.info(
-        `Exported ${result.rows} row(s) to ${result.file} (${formatBytes(result.bytes)} in ${result.elapsedMillis} ms)`,
+        `Exported ${result.rows} row(s)${on(source.connectionName)} to ${result.file} (${formatBytes(result.bytes)} in ${result.elapsedMillis} ms)`,
       );
 
       if (result.unquotedFields && result.unquotedFields > 0) {
@@ -325,6 +327,16 @@ async function chooseCsvQuoting(configured: string): Promise<CsvQuoting | undefi
  * The one escape worth supporting: a real tab in a text field is invisible, so there is no way to see
  * that it is there, and every settings box in the world accepts this spelling.
  */
+/**
+ * ` on 'Production'`, or nothing when the caller had no name to give.
+ *
+ * An export runs over one connection and produces a file, and the file name alone does not say which
+ * database it came from - which is the first thing somebody reading the log wants to know.
+ */
+function on(connectionName: string | undefined): string {
+  return connectionName === undefined || connectionName === '' ? '' : ` on '${connectionName}'`;
+}
+
 function normaliseDelimiter(value: string): string {
   return value === '\\t' ? '\t' : value;
 }

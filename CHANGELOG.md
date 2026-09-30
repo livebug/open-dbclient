@@ -23,6 +23,16 @@
 
 ### 修复
 
+- **日志里现在看得出是哪个连接**。元数据规则的执行行(规则名 + 填好占位符的 SQL)、回落驱动时的
+  `debug` 行、DDL 规则行、导出行都带上连接名(`on 'Production'`);**健康报告**的「近期执行的语句」与
+  「元数据调用」两张表原来显示的是连接 id,现在显示连接名(profile 被删掉时才回落成 id)。
+  原来只有「Running on '<名字>'」一行有名字,查问题时还得自己去对 id 是谁
+- **自定义规则在 catalog 层被隐藏后又重新能用了**。把 PostgreSQL/openGauss 上那层假目录节点去掉之后,
+  后续读取不再带 catalog 名 → 规则里写了 `${catalog}` 的会被判成“填不出来”而**拒绝执行、回落到驱动**
+  (也就是又变慢)。现在不显示这一层时改成带上**连接自己指向的 catalog**(驱动上报的 `getCatalog()`,
+  随 `DatabaseCapabilities` 一起返回),规则照旧能填出值
+- **用不上就不问**:驱动报 catalog 参数无意义时,`getCatalogs()` **不再被调用** —— 那个答案本来就会被
+  丢掉,而每次往返都是慢库上的真实开销。副作用已写进 README:这类驱动上 `catalogs` 规则没有任何作用
 - **PostgreSQL/openGauss 上“目录(catalog)”这一层展开出来是错的**。树原来只要 `getCatalogs()` 返回
   多于一个名字就显示这一层,而 pgjdbc 会列出**整个集群的数据库**(含 `template1` 这种连不上的),
   之后又**完全忽略** catalog 参数:实测(pgjdbc 42.7.4,连在 `postgres` 上)`getTables("otherdb")`

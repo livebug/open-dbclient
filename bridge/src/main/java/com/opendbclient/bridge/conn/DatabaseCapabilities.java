@@ -51,6 +51,14 @@ public record DatabaseCapabilities(
         String catalogTerm,
         String schemaTerm,
         String catalogSeparator,
+        /**
+         * The catalog this connection is pointed at, or null when it has none.
+         *
+         * <p>Not a capability strictly speaking, but a fact the driver reports about itself and the only one
+         * the extension needs to know alongside them: a database whose catalog level is never shown still
+         * has a catalog, and a user-written query that filters on it needs the name.
+         */
+        String currentCatalog,
         boolean supportsCatalogs,
         boolean supportsSchemas,
         boolean storesUpperCaseIdentifiers,
@@ -90,6 +98,7 @@ public record DatabaseCapabilities(
                 MetadataSupport.value(meta::getCatalogTerm, null),
                 MetadataSupport.value(meta::getSchemaTerm, null),
                 MetadataSupport.value(meta::getCatalogSeparator, null),
+                MetadataSupport.value(connection::getCatalog, null),
                 MetadataSupport.flag(meta::supportsCatalogsInDataManipulation, false),
                 MetadataSupport.flag(meta::supportsSchemasInDataManipulation, false),
                 MetadataSupport.flag(meta::storesUpperCaseIdentifiers, false),
@@ -110,7 +119,7 @@ public record DatabaseCapabilities(
     /** Fallback used when even {@code getMetaData()} is unavailable. */
     public static DatabaseCapabilities unknown() {
         return new DatabaseCapabilities(
-                null, null, null, null, null, null, null, null,
+                null, null, null, null, null, null, null, null, null,
                 false, false, false, false, true, true, 0, 0,
                 true, false, false, false, false, false, false);
     }
@@ -144,6 +153,7 @@ public record DatabaseCapabilities(
         putIfPresent(payload, "catalogTerm", catalogTerm);
         putIfPresent(payload, "schemaTerm", schemaTerm);
         putIfPresent(payload, "catalogSeparator", catalogSeparator);
+        putIfPresent(payload, "currentCatalog", currentCatalog);
         payload.put("supportsCatalogs", supportsCatalogs);
         payload.put("supportsSchemas", supportsSchemas);
         payload.put("storesUpperCaseIdentifiers", storesUpperCaseIdentifiers);

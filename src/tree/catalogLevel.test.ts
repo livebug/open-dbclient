@@ -28,7 +28,22 @@ test('several catalogs are ignored when the driver cannot read inside them', () 
   assert.equal(
     level.catalog,
     undefined,
-    'nothing is passed down either, so the driver keeps using the database the user connected to',
+    'nothing is passed down either when nothing named the connection',
+  );
+});
+
+test('the connection own catalog is carried down when the driver names none', () => {
+  // The reason this matters: a rule may filter on `${catalog}`, and a read that names no catalog at all
+  // refuses such a rule and falls back to the driver's own metadata - which is the slow path this whole
+  // feature exists to avoid. Reported by a user as "customisation stopped working".
+  const level = catalogLevel(['otherdb', 'postgres', 'template1'], false, 'postgres');
+
+  assert.equal(level.show, false);
+  assert.equal(level.catalog, 'postgres', 'the read still names the catalog the connection is pointed at');
+  assert.equal(
+    catalogLevel(['shop'], true, 'shop').catalog,
+    'shop',
+    'and the one usable catalog wins over it',
   );
 });
 
@@ -47,7 +62,6 @@ test('no catalogs at all leaves the read to the connection', () => {
     assert.equal(level.catalog, undefined, String(supports));
   }
 });
-
 test('two unusable catalogs are as useless as three', () => {
   assert.equal(catalogLevel(['a', 'b'], false).show, false);
   assert.equal(catalogLevel(['a', 'b'], true).show, true, 'and the same two are enough when usable');

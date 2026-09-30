@@ -325,6 +325,7 @@ export class ResultPanel implements vscode.Disposable {
       // rather than reported as a failure the user can do nothing about.
       sql: this.sourceSql,
       suggestedName: this.suggestedFileName(),
+      connectionName: this.connectionName,
     });
   }
 

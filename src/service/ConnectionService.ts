@@ -75,6 +75,29 @@ export class ConnectionService implements vscode.Disposable {
     return this.store.find(profileId)?.url;
   }
 
+  /**
+   * The name a user knows a connection by, or undefined when the profile is gone.
+   *
+   * Exists so that every line the extension logs about a read or a statement can say which connection it
+   * was for. A profile id in the output channel is an identifier nobody recognises, and "which connection
+   * was that?" is the first question a log is read to answer.
+   */
+  displayNameOf(profileId: string): string | undefined {
+    return this.store.find(profileId)?.name;
+  }
+
+  /**
+   * The catalog the connection is pointed at, as the driver reported it.
+   *
+   * Used when there is no catalog *level* in the tree: the read still has to name a catalog for a rule's
+   * `${catalog}` to be filled, and a driver that cannot read across catalogs is exactly the one whose tree
+   * has no level to take the name from.
+   */
+  catalogOf(profileId: string): string | undefined {
+    const catalog = this.states.get(profileId)?.capabilities?.currentCatalog;
+    return catalog === null || catalog === '' ? undefined : catalog;
+  }
+
   /** Ids of every profile currently connected. */
   connectedIds(): string[] {
     return [...this.states.entries()]

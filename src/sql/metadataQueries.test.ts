@@ -6,7 +6,10 @@ import {
   expandMetadataSql,
   matchMetadataQuery,
   metadataQueryExamples,
+  otherColumns,
   parseMetadataQueries,
+  TABLE_REMARK_COLUMNS,
+  TABLE_RESERVED_COLUMNS,
 } from './metadataQueries.ts';
 
 /**
@@ -122,6 +125,44 @@ test('a missing catalog or schema stops the rule instead of dropping the filter'
 test('an unknown placeholder is reported, not silently left in the SQL', () => {
   const { missing } = expandMetadataSql('WHERE t = \'${table}\'', { schema: 'x' });
   assert.deepEqual(missing, ['table']);
+});
+
+test('the columns outside the contract are the other information, in result order', () => {
+  assert.deepEqual(otherColumns(['TABLE_NAME', 'EST_ROWS', 'ENGINE']), ['EST_ROWS', 'ENGINE']);
+  // Case-insensitively, because a driver may report an alias in either case.
+  assert.deepEqual(otherColumns(['table_name', 'remarks', 'SIZE']), ['SIZE']);
+  assert.deepEqual(otherColumns(['', '   ']), []);
+  assert.deepEqual(otherColumns(TABLE_RESERVED_COLUMNS), []);
+});
+
+test('the comment may be spelled the way a catalog spells it', () => {
+  assert.deepEqual(TABLE_REMARK_COLUMNS, ['REMARKS', 'TABLE_COMMENT', 'COMMENT']);
+  for (const name of TABLE_REMARK_COLUMNS) {
+    assert.ok(TABLE_RESERVED_COLUMNS.includes(name), `${name} must not become other information`);
+  }
+});
+
+test('the shipped tables examples use the two things a rule may add', () => {
+  // The examples are the only documentation most users will read, so they have to demonstrate the whole
+  // point: a comment the tree shows as the table's Chinese name, and one extra field it shows in the
+  // tooltip. Examples that returned names only would teach half the feature.
+  const tables = metadataQueryExamples().filter((rule) => rule.kind === 'tables');
+  assert.ok(tables.length > 0);
+
+  for (const rule of tables) {
+    const aliases = [...rule.sql.matchAll(/\sAS\s+([A-Z_][A-Z0-9_]*)/gi)].map((match) =>
+      match[1].toUpperCase(),
+    );
+    assert.ok(aliases.includes('TABLE_NAME'), `${rule.id} must name the tables it returns`);
+    assert.ok(
+      TABLE_REMARK_COLUMNS.some((name) => aliases.includes(name)),
+      `${rule.id} must return a comment, or the tree can only show physical names`,
+    );
+    assert.ok(
+      aliases.some((alias) => !TABLE_RESERVED_COLUMNS.includes(alias)),
+      `${rule.id} must return an extra field, so the extensibility is visible in the example`,
+    );
+  }
 });
 
 test('the shipped examples are rules that parse, match and use known placeholders', () => {

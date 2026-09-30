@@ -14,6 +14,8 @@
  * Kept free of `vscode` so the rules can be tested directly.
  */
 
+import type { TableDetail } from '../model/tableDetails';
+
 /** Where an action is offered. */
 export type ActionTarget = 'table' | 'view' | 'column';
 
@@ -45,6 +47,14 @@ export interface ActionContext {
    */
   readonly column?: string;
 
+  /**
+   * The table's comment - the name it is documented under, which on a Chinese schema is often the only
+   * name anybody recognises. Absent when the database has no comment for it, and for the same reason as
+   * `${column}`: a template that searched for `LIKE '%${remark}%'` must be refused rather than run
+   * against nothing.
+   */
+  readonly remark?: string;
+
   /** The same names wrapped in the quoting character the database reported. */
   readonly quotedTable: string;
   readonly quotedSchema: string;
@@ -53,6 +63,15 @@ export interface ActionContext {
   readonly quotedColumn?: string;
 
   readonly connectionName: string;
+
+  /**
+   * Whatever the metadata rule returned for the table under its own alias, e.g. `${EST_ROWS}`.
+   *
+   * An open-ended set, which is the point: the rule's author decides what is worth having, and the value
+   * arrives under the name they chose. A field that would shadow one of the placeholders above is dropped,
+   * so `${table}` is always the table and never a rule's column of the same name.
+   */
+  readonly [alias: string]: string | undefined;
 }
 
 /** The placeholders a template may use. Documented in the settings that expose templates. */
@@ -62,6 +81,7 @@ export const ACTION_PLACEHOLDERS = [
   '${catalog}',
   '${qualified}',
   '${column}',
+  '${remark}',
   '${quotedTable}',
   '${quotedSchema}',
   '${quotedCatalog}',
@@ -70,11 +90,31 @@ export const ACTION_PLACEHOLDERS = [
   '${connectionName}',
 ] as const;
 
+/**
+ * The names above, lower-cased, as a set.
+ *
+ * Derived rather than written out again so that a placeholder added above cannot be left unprotected
+ * below: a rule whose extra field happens to be called `TABLE` must not be able to rewrite the table's
+ * name in every template that uses `${table}`.
+ */
+const CONTRACT_NAMES = new Set(
+  ACTION_PLACEHOLDERS.map((placeholder) => placeholder.slice(2, -1).toLowerCase()),
+);
+
 export interface ActionContextInput {
   readonly catalog?: string;
   readonly schema?: string;
   readonly table: string;
   readonly column?: string;
+  /** The table's comment, when the database has one and the caller could read it. */
+  readonly remark?: string;
+  /**
+   * The extra fields the metadata rule returned for the table.
+   *
+   * Passed through by name, because only the rule's author knows what they asked for: an `EST_ROWS` column
+   * becomes `${EST_ROWS}`, and nothing here needs to know it is a row count.
+   */
+  readonly details?: readonly TableDetail[];
   readonly connectionName: string;
   /** The quote character the database reported, or undefined when it cannot quote. */
   readonly quote: string | undefined;
@@ -94,6 +134,7 @@ export function buildActionContext(input: ActionContextInput): ActionContext {
   const schema = input.schema ?? '';
   const parts = [schema, input.table].filter((part) => part !== '');
   const column = input.column ?? '';
+  const remark = input.remark ?? '';
 
   const context: ActionContext = {
     table: input.table,
@@ -107,10 +148,36 @@ export function buildActionContext(input: ActionContextInput): ActionContext {
     connectionName: input.connectionName,
   };
 
-  if (column === '') {
-    return context;
+  // Optional values are added only when they exist, so a template that needs one is refused rather than
+  // expanded into an empty string.
+  return {
+    ...context,
+    ...(column === '' ? {} : { column, quotedColumn: quoteName(column, input.quote) }),
+    ...(remark === '' ? {} : { remark }),
+    ...extraFields(input.details),
+  };
+}
+
+/**
+ * The rule's extra fields, keyed by the alias it used.
+ *
+ * The alias is kept as written - `EST_ROWS` stays `EST_ROWS` - because that is the spelling in the rule the
+ * user is looking at. An empty value is skipped for the same reason a missing one is: an empty
+ * `${ENGINE}` inside a `WHERE` clause matches everything, and an empty one inside a string literal is a
+ * different query from the one they wrote. A name that collides with the contract is dropped rather than
+ * allowed to shadow it.
+ */
+function extraFields(details: readonly TableDetail[] | undefined): Record<string, string> {
+  const extra: Record<string, string> = {};
+  for (const detail of details ?? []) {
+    const name = detail.name.trim();
+    if (name === '' || detail.value === '' || CONTRACT_NAMES.has(name.toLowerCase())) {
+      continue;
+    }
+    // First one wins, so the order of the SELECT list decides and a repeated alias cannot flip it.
+    extra[name] ??= detail.value;
   }
-  return { ...context, column, quotedColumn: quoteName(column, input.quote) };
+  return extra;
 }
 
 const TARGETS: readonly ActionTarget[] = ['table', 'view', 'column'];

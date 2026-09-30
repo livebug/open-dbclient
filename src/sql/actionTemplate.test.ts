@@ -147,6 +147,76 @@ test('column expands when the context has one', () => {
   assert.equal(expandAction('SELECT ${column}', withColumn), 'SELECT id');
 });
 
+test('remark is left in place when the database has no comment to give', () => {
+  // Refused rather than blanked, for the same reason as `${column}`: `LIKE '%${remark}%'` with nothing
+  // in it matches every row, and a wrong answer is worse than no answer.
+  assert.equal(expandAction("SELECT * FROM t WHERE c LIKE '%${remark}%'", context), "SELECT * FROM t WHERE c LIKE '%${remark}%'");
+  assert.deepEqual(unresolvedPlaceholders('WHERE c = ${remark}', context), ['${remark}']);
+});
+
+test('remark expands to the comment as written', () => {
+  const commented = buildActionContext({
+    schema: 'public',
+    table: 'orders',
+    remark: '订单',
+    connectionName: 'c',
+    quote: '"',
+  });
+
+  // Not quoted and not escaped: a comment is data, and whether it belongs inside quotes depends on where
+  // the user put the placeholder, which is a decision only they can make.
+  assert.equal(expandAction("SELECT '${remark}'", commented), "SELECT '订单'");
+  assert.deepEqual(unresolvedPlaceholders('SELECT ${remark}', commented), []);
+});
+
+test('the extra fields a metadata rule returned are usable under their own alias', () => {
+  const described = buildActionContext({
+    table: 'orders',
+    details: [
+      { name: 'EST_ROWS', value: '12000' },
+      { name: 'ENGINE', value: 'InnoDB' },
+    ],
+    connectionName: 'c',
+    quote: '"',
+  });
+
+  // The alias is kept as written: it is the spelling in the rule the user is looking at.
+  assert.equal(
+    expandAction('SELECT ${EST_ROWS} FROM ${quotedTable} /* ${ENGINE} */', described),
+    'SELECT 12000 FROM "orders" /* InnoDB */',
+  );
+  assert.deepEqual(unresolvedPlaceholders('SELECT ${EST_ROWS}', described), []);
+});
+
+test('an extra field cannot shadow a placeholder', () => {
+  // Otherwise a rule with a column aliased `table`, or `table_name`, could quietly rewrite what every
+  // template in the workspace points at.
+  const hostile = buildActionContext({
+    schema: 'public',
+    table: 'orders',
+    details: [
+      { name: 'table', value: 'nonsense' },
+      { name: 'TABLE', value: 'nonsense' },
+      { name: 'QuotedQualified', value: 'nonsense' },
+    ],
+    connectionName: 'c',
+    quote: '"',
+  });
+
+  assert.equal(expandAction('FROM ${quotedQualified} AS ${table}', hostile), 'FROM "public"."orders" AS orders');
+});
+
+test('an empty extra field is left unusable rather than expanded to nothing', () => {
+  const empty = buildActionContext({
+    table: 't',
+    details: [{ name: 'ENGINE', value: '' }],
+    connectionName: 'c',
+    quote: '"',
+  });
+
+  assert.deepEqual(unresolvedPlaceholders('WHERE e = ${ENGINE}', empty), ['${ENGINE}']);
+});
+
 test('unresolved placeholders are reported once each', () => {
   const missing = unresolvedPlaceholders('SELECT ${a}, ${b}, ${a}, ${table}', context);
   assert.deepEqual(missing, ['${a}', '${b}']);

@@ -4,7 +4,6 @@ import { Config } from '../constants';
 import type { JdbcBridge } from '../bridge/JdbcBridge';
 import { Methods } from '../bridge/protocol';
 import type {
-  CellValue,
   ColumnInfo,
   DatabaseCapabilities,
   IndexInfo,
@@ -21,6 +20,13 @@ import {
   type MetadataQueryKind,
   type MetadataQueryValues,
 } from '../sql/metadataQueries';
+import {
+  schemaNameFromRow,
+  tableFromRow,
+  toMetadataRows,
+  type MetadataResult,
+} from '../sql/metadataRows';
+import type { DescribedTable } from '../model/tableDetails';
 import { describeError, log } from '../util/logger';
 import { t } from '../util/i18n';
 
@@ -101,7 +107,7 @@ export class MetadataService {
     return result.tableTypes ?? [];
   }
 
-  async tables(request: TableRequest): Promise<TableInfo[]> {
+  async tables(request: TableRequest): Promise<DescribedTable[]> {
     const fromRule = await this.tablesFromRule(request);
     if (fromRule) {
       return fromRule;
@@ -202,7 +208,7 @@ export class MetadataService {
     rule: MetadataQuery,
     connectionId: string,
     values: MetadataQueryValues,
-  ): Promise<MetadataRow[] | undefined> {
+  ): Promise<MetadataResult | undefined> {
     const expanded = expandMetadataSql(rule.sql, values);
     if (expanded.missing.length > 0) {
       // Not run with the placeholder dropped: removing a filter changes which rows come back, not how
@@ -228,7 +234,7 @@ export class MetadataService {
   }
 
   /** Runs a statement to completion and reads every row it returned, keyed by column name. */
-  private async runQuery(connectionId: string, sql: string): Promise<MetadataRow[]> {
+  private async runQuery(connectionId: string, sql: string): Promise<MetadataResult> {
     const pageSize = METADATA_PAGE_SIZE;
     const first = await this.request<QueryExecuteResult>(Methods.queryExecute, {
       connectionId,
@@ -240,7 +246,10 @@ export class MetadataService {
       fetchSize: pageSize,
     });
 
-    const names = (first.columns ?? []).map((column) => column.name.toUpperCase());
+    // Both spellings are kept: the upper-cased name keys the rows, and the original spelling is what the
+    // user wrote in their SELECT, which is what the tree shows back to them as "other information".
+    const columns = (first.columns ?? []).map((column) => column.name);
+    const names = columns.map((name) => name.toUpperCase());
     const rows = toMetadataRows(names, first.rows ?? []);
     const queryId = first.queryId;
     const total = first.totalRows ?? rows.length;
@@ -273,7 +282,7 @@ export class MetadataService {
       }
     }
 
-    return rows;
+    return { columns, rows };
   }
 
   private async schemasFromRule(request: MetadataRequest): Promise<string[] | undefined> {
@@ -282,16 +291,16 @@ export class MetadataService {
       return undefined;
     }
 
-    const rows = await this.runRule(rule, request.connectionId, { catalog: request.catalog });
-    if (!rows) {
+    const result = await this.runRule(rule, request.connectionId, { catalog: request.catalog });
+    if (!result) {
       return undefined;
     }
 
-    const schemas = rows
-      .map((row) => text(row, 'TABLE_SCHEM') ?? text(row, 'SCHEMA_NAME'))
+    const schemas = result.rows
+      .map((row) => schemaNameFromRow(row))
       .filter((name): name is string => name !== undefined && name !== '');
 
-    if (schemas.length === 0 && rows.length > 0) {
+    if (schemas.length === 0 && result.rows.length > 0) {
       // Rows came back but no usable names: the rule is written against the wrong column names, which is
       // worth saying out loud rather than reporting as a database with no schemas.
       this.reportOnce(
@@ -303,23 +312,25 @@ export class MetadataService {
     return schemas;
   }
 
-  private async tablesFromRule(request: TableRequest): Promise<TableInfo[] | undefined> {
+  private async tablesFromRule(request: TableRequest): Promise<DescribedTable[] | undefined> {
     const rule = this.ruleFor('tables', request.url);
     if (!rule) {
       return undefined;
     }
 
-    const rows = await this.runRule(rule, request.connectionId, {
+    const result = await this.runRule(rule, request.connectionId, {
       catalog: request.catalog,
       schema: request.schema,
       namePattern: request.namePattern,
     });
-    if (!rows) {
+    if (!result) {
       return undefined;
     }
 
-    const described = rows.map((row) => tableFromRow(row, request)).filter((table): table is TableInfo => table !== undefined);
-    if (described.length === 0 && rows.length > 0) {
+    const described = result.rows
+      .map((row) => tableFromRow(row, request, result.columns))
+      .filter((table): table is DescribedTable => table !== undefined);
+    if (described.length === 0 && result.rows.length > 0) {
       this.reportOnce(
         `rule-columns-${rule.id}`,
         `The metadata query '${rule.id}' returned rows but no TABLE_NAME column, so it was ignored.`,
@@ -341,54 +352,6 @@ export class MetadataService {
 
 /** How many rows a metadata rule is read in at a time. */
 const METADATA_PAGE_SIZE = 5_000;
-
-/** A row of a metadata rule's result, with the column names upper-cased. */
-type MetadataRow = ReadonlyMap<string, CellValue>;
-
-function toMetadataRows(names: readonly string[], rows: readonly (readonly CellValue[])[]): MetadataRow[] {
-  return rows.map((values) => {
-    const row = new Map<string, CellValue>();
-    names.forEach((name, index) => row.set(name, values[index] ?? null));
-    return row;
-  });
-}
-
-/** Reads a cell as text, or undefined when it is absent or null. */
-function text(row: MetadataRow, key: string): string | undefined {
-  const value = row.get(key);
-  if (value === null || value === undefined) {
-    return undefined;
-  }
-  return typeof value === 'string' ? value : String(value);
-}
-
-/**
- * Maps one row of a `tables` rule onto what the tree and the completion cache expect.
- *
- * Column names follow `DatabaseMetaData.getTables`, and everything except the name is optional: a rule
- * that answers only with names is still a working rule, and the schema the tree asked for is used when the
- * row does not carry one.
- */
-function tableFromRow(row: MetadataRow, request: TableRequest): TableInfo | undefined {
-  const name = text(row, 'TABLE_NAME');
-  if (name === undefined || name === '') {
-    return undefined;
-  }
-
-  const type = text(row, 'TABLE_TYPE') ?? 'TABLE';
-  if (request.types && request.types.length > 0 && !request.types.includes(type)) {
-    return undefined;
-  }
-
-  const table: TableInfo = {
-    name,
-    type,
-    catalog: text(row, 'TABLE_CAT') ?? text(row, 'TABLE_CATALOG') ?? request.catalog,
-    schema: text(row, 'TABLE_SCHEM') ?? text(row, 'SCHEMA_NAME') ?? request.schema,
-  };
-  const remarks = text(row, 'REMARKS');
-  return remarks ? { ...table, remarks } : table;
-}
 
 /**
  * The DDL presentation settings, read at call time.

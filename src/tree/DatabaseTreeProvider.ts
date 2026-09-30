@@ -99,9 +99,25 @@ export class DatabaseTreeProvider
     }
   }
 
-  /** Whether a name passes the filter. An empty filter matches everything. */
-  private matches(name: string): boolean {
-    return this.nameFilter === '' || name.toLowerCase().includes(this.nameFilter.toLowerCase());
+  /**
+   * Whether a name passes the filter. An empty filter matches everything.
+   *
+   * `extra` is everything else the node is known by. A table's comment is its name to the person reading
+   * the tree, so a filter that compared only physical names would hide the very row they were looking
+   * for - and on a schema where the comment is Chinese and the name is not, that is the common case.
+   *
+   * Comparison stays a plain substring search over the whole value, including the extra fields. Matching
+   * word by word, or ranking matches, would make the filter's behaviour something a user cannot predict
+   * from what they typed.
+   */
+  private matches(name: string, ...extra: readonly (string | undefined)[]): boolean {
+    if (this.nameFilter === '') {
+      return true;
+    }
+    const needle = this.nameFilter.toLowerCase();
+    return [name, ...extra].some(
+      (value) => value !== undefined && value.toLowerCase().includes(needle),
+    );
   }
 
   getTreeItem(node: DatabaseTreeNode): vscode.TreeItem {
@@ -274,7 +290,15 @@ export class DatabaseTreeProvider
 
     const wantsViews = node.folder === 'views';
     return tables
-      .filter((table) => isView(table.type) === wantsViews && this.matches(table.name))
+      .filter(
+        (table) =>
+          isView(table.type) === wantsViews &&
+          this.matches(
+            table.name,
+            table.remarks,
+            ...(table.details ?? []).map((detail) => detail.value),
+          ),
+      )
       .map((table) => ({
         kind: (isView(table.type) ? 'view' : 'table') as 'view' | 'table',
         connectionId: node.connectionId,
@@ -306,7 +330,8 @@ export class DatabaseTreeProvider
     );
 
     const children: DatabaseTreeNode[] = columns
-      .filter((column) => this.matches(column.name))
+      // The column's own comment is matched too, for the same reason a table's is.
+      .filter((column) => this.matches(column.name, column.remarks))
       .map((column) => ({
         kind: 'column' as const,
         connectionId: node.connectionId,
@@ -314,6 +339,7 @@ export class DatabaseTreeProvider
         catalog: node.catalog,
         schema: node.schema,
         table: node.table.name,
+        details: node.table.details,
       }));
 
     // Indexes only make sense for tables; a view has none to list.

@@ -1,7 +1,8 @@
 import * as vscode from 'vscode';
 
-import type { ColumnInfo, IndexInfo, TableInfo } from '../bridge/protocol';
+import type { ColumnInfo, IndexInfo } from '../bridge/protocol';
 import type { ConnectionProfile } from '../model/ConnectionProfile';
+import type { DescribedTable, TableDetail } from '../model/tableDetails';
 import { t } from '../util/i18n';
 
 /**
@@ -60,7 +61,7 @@ export interface TableNode extends NodeBase {
   readonly connectionId: string;
   readonly catalog?: string;
   readonly schema?: string;
-  readonly table: TableInfo;
+  readonly table: DescribedTable;
 }
 
 export interface ColumnNode extends NodeBase {
@@ -77,6 +78,14 @@ export interface ColumnNode extends NodeBase {
   readonly catalog?: string;
   readonly schema?: string;
   readonly table: string;
+  /**
+   * The extra fields the metadata rule returned for the table this column belongs to.
+   *
+   * Here so that an action on a column can use the same fields as an action on its table: the difference
+   * between the two is which node the user right-clicked, and that should not decide what a template can
+   * say about the table.
+   */
+  readonly details?: readonly TableDetail[];
 }
 
 export interface IndexNode extends NodeBase {
@@ -176,9 +185,7 @@ export function nodeDescription(node: DatabaseTreeNode): string | undefined {
       return node.profile.user || undefined;
     case 'table':
     case 'view':
-      // Show the driver's own type label when it is not the obvious one, so a materialised view or
-      // a foreign table is distinguishable from a plain table.
-      return isPlainType(node.kind, node.table.type) ? undefined : node.table.type;
+      return tableDescription(node.table, node.kind);
     case 'column':
       return columnDescription(node.column);
     case 'index':
@@ -186,6 +193,26 @@ export function nodeDescription(node: DatabaseTreeNode): string | undefined {
     default:
       return undefined;
   }
+}
+
+/**
+ * The dimmed text after a table's name: its comment, then the driver's type label when that label says
+ * something.
+ *
+ * The comment goes here rather than into the label because the label is what the user copies into a
+ * query - `SELECT * FROM sales_orders` - while the comment is what they recognise. Swapping them would
+ * make the tree readable and the SQL wrong.
+ */
+function tableDescription(table: DescribedTable, kind: 'table' | 'view'): string | undefined {
+  // The comment is shown as written. A leading or trailing space would silently break the ` · ` join, and
+  // a catalog that stores an empty comment for "none" is common enough that it is treated as none.
+  const remark = table.remarks?.trim();
+  const parts = [remark === undefined || remark === '' ? undefined : remark];
+  if (!isPlainType(kind, table.type)) {
+    parts.push(table.type);
+  }
+  const shown = parts.filter((part): part is string => part !== undefined);
+  return shown.length === 0 ? undefined : shown.join(' · ');
 }
 
 export function nodeTooltip(node: DatabaseTreeNode): vscode.MarkdownString | undefined {
@@ -201,6 +228,12 @@ export function nodeTooltip(node: DatabaseTreeNode): vscode.MarkdownString | und
       tooltip.appendMarkdown(`**${escapeMarkdown(table.name)}** _(${escapeMarkdown(table.type)})_\n\n`);
       if (table.remarks) {
         tooltip.appendMarkdown(`${escapeMarkdown(table.remarks)}\n\n`);
+      }
+      // Every field the metadata rule returned beyond the contract, as returned. Kept out of the
+      // description because a tree row is one line: an extra row count or engine name belongs in the
+      // tooltip, where there is room to read it.
+      for (const detail of table.details ?? []) {
+        tooltip.appendMarkdown(`${escapeMarkdown(detail.name)}: ${escapeMarkdown(detail.value)}\n\n`);
       }
       tooltip.appendCodeblock(qualifiedName(table.catalog, table.schema, table.name), 'sql');
       return tooltip;

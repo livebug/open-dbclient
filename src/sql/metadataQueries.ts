@@ -26,6 +26,45 @@
  * has not can alias their columns to match.
  */
 
+/**
+ * The columns accepted as a table's comment - the name it is known by in the user's own vocabulary.
+ *
+ * Three spellings rather than one, because the three catalog views a rule is realistically written
+ * against disagree: JDBC calls it `REMARKS`, `information_schema.tables` on MySQL calls it
+ * `TABLE_COMMENT`, and hand-written statements often alias it `COMMENT`. Accepting all three costs a
+ * lookup each and saves every user from discovering the list by trial and error.
+ */
+export const TABLE_REMARK_COLUMNS: readonly string[] = ['REMARKS', 'TABLE_COMMENT', 'COMMENT'];
+
+/**
+ * The result columns that belong to the contract, in the names JDBC uses for the same data.
+ *
+ * Every other column a rule returns becomes the table's "other information" and is shown in the tree's
+ * tooltip - which is what makes this extensible without an extension release per database.
+ */
+export const TABLE_RESERVED_COLUMNS: readonly string[] = [
+  'TABLE_NAME',
+  'TABLE_SCHEM',
+  'SCHEMA_NAME',
+  'TABLE_CAT',
+  'TABLE_CATALOG',
+  'TABLE_TYPE',
+  ...TABLE_REMARK_COLUMNS,
+];
+
+/**
+ * The result columns that are not part of the contract, in the order the statement returned them.
+ *
+ * Order is kept because the user chose it: a rule that selects the comment before the row count is
+ * asking for them to be read in that order, and re-sorting into a map would lose that intent.
+ */
+export function otherColumns(columns: readonly string[]): string[] {
+  const reserved = new Set(TABLE_RESERVED_COLUMNS);
+  // Named columns only: a driver that did not name one of its result columns leaves an empty entry here,
+  // and "": "12" is not information about the table.
+  return columns.filter((name) => name.trim() !== '' && !reserved.has(name.toUpperCase()));
+}
+
 /** Which metadata read a rule replaces. */
 export type MetadataQueryKind = 'schemas' | 'tables';
 
@@ -161,14 +200,16 @@ function valueOf(name: string, values: MetadataQueryValues): string | undefined 
 /**
  * The example rules the install command offers.
  *
- * PostgreSQL and the drivers that keep its catalogs. `information_schema` is the standard spelling and
- * `pg_catalog` the fast one; the rules use `information_schema` because it is what a user can check by
- * hand, and any database that answers it will answer it far faster than the driver's
- * `getColumns`-equivalent does.
+ * PostgreSQL (and the databases that keep its catalogs) plus MySQL, which is the pair that covers what
+ * most people are running. The PostgreSQL rules read `pg_catalog` rather than `information_schema` for
+ * two reasons: it is dramatically faster on a large catalog, and it is the only one of the two that can
+ * reach the table's comment, which lives in `pg_description` and is what a Chinese schema usually uses as
+ * the table's real name.
  *
  * They are offered rather than defaulted into the setting: switching the source of every tree on every
  * PostgreSQL connection is a large change to make on somebody's behalf, and one they should be able to
- * see before it happens.
+ * see before it happens. The extra column in the PostgreSQL example is deliberate as well - it is an
+ * illustration that a rule may return anything and the tree will show it.
  */
 export function metadataQueryExamples(): MetadataQuery[] {
   return [
@@ -176,41 +217,82 @@ export function metadataQueryExamples(): MetadataQuery[] {
       id: 'postgres-tables',
       kind: 'tables',
       match: 'jdbc:postgresql:*',
-      sql:
-        `SELECT table_schema AS TABLE_SCHEM,\n` +
-        `       table_name   AS TABLE_NAME,\n` +
-        `       table_type   AS TABLE_TYPE\n` +
-        `  FROM information_schema.tables\n` +
-        ` WHERE table_schema = '\${schema}'`,
+      sql: postgresTablesSql(),
     },
     {
       id: 'postgres-schemas',
       kind: 'schemas',
       match: 'jdbc:postgresql:*',
-      sql:
-        `SELECT schema_name AS TABLE_SCHEM\n` +
-        `  FROM information_schema.schemata\n` +
-        ` ORDER BY schema_name`,
+      sql: postgresSchemasSql(),
     },
     {
       id: 'opengauss-tables',
       kind: 'tables',
+      // openGauss keeps the PostgreSQL catalogs, and its own driver's metadata calls are the ones this
+      // feature was written for.
       match: 'jdbc:opengauss:*',
-      sql:
-        `SELECT table_schema AS TABLE_SCHEM,\n` +
-        `       table_name   AS TABLE_NAME,\n` +
-        `       table_type   AS TABLE_TYPE\n` +
-        `  FROM information_schema.tables\n` +
-        ` WHERE table_schema = '\${schema}'`,
+      sql: postgresTablesSql(),
     },
     {
       id: 'opengauss-schemas',
       kind: 'schemas',
       match: 'jdbc:opengauss:*',
+      sql: postgresSchemasSql(),
+    },
+    {
+      id: 'mysql-tables',
+      kind: 'tables',
+      match: 'jdbc:mysql:*',
+      sql:
+        `SELECT table_schema  AS TABLE_SCHEM,\n` +
+        `       table_name    AS TABLE_NAME,\n` +
+        `       table_type    AS TABLE_TYPE,\n` +
+        `       table_comment AS REMARKS,\n` +
+        `       engine        AS ENGINE,\n` +
+        `       table_rows    AS EST_ROWS\n` +
+        `  FROM information_schema.tables\n` +
+        ` WHERE table_schema = '\${schema}'\n` +
+        ` ORDER BY table_name`,
+    },
+    {
+      id: 'mysql-schemas',
+      kind: 'schemas',
+      match: 'jdbc:mysql:*',
       sql:
         `SELECT schema_name AS TABLE_SCHEM\n` +
         `  FROM information_schema.schemata\n` +
         ` ORDER BY schema_name`,
     },
   ];
+}
+
+/**
+ * `reltuples` is an estimate the planner keeps in the catalog, so reading it costs nothing - which is the
+ * point of the example. `obj_description` is what carries the comment on PostgreSQL.
+ */
+function postgresTablesSql(): string {
+  return (
+    `SELECT n.nspname AS TABLE_SCHEM,\n` +
+    `       c.relname AS TABLE_NAME,\n` +
+    `       CASE c.relkind WHEN 'r' THEN 'TABLE' WHEN 'p' THEN 'TABLE' WHEN 'v' THEN 'VIEW'\n` +
+    `                      WHEN 'm' THEN 'MATERIALIZED VIEW' WHEN 'f' THEN 'FOREIGN TABLE'\n` +
+    `                      ELSE 'TABLE' END AS TABLE_TYPE,\n` +
+    `       pg_catalog.obj_description(c.oid, 'pg_class') AS REMARKS,\n` +
+    `       c.reltuples::bigint AS EST_ROWS\n` +
+    `  FROM pg_catalog.pg_class c\n` +
+    `  JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace\n` +
+    ` WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')\n` +
+    `   AND n.nspname = '\${schema}'\n` +
+    ` ORDER BY c.relname`
+  );
+}
+
+/** System schemas are left out because a tree is for reading, and nobody browses `pg_toast`. */
+function postgresSchemasSql(): string {
+  return (
+    `SELECT nspname AS TABLE_SCHEM\n` +
+    `  FROM pg_catalog.pg_namespace\n` +
+    ` WHERE nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')\n` +
+    ` ORDER BY nspname`
+  );
 }

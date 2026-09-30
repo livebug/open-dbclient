@@ -3,6 +3,7 @@ import * as vscode from 'vscode';
 import { Commands, Config, connectionDirective } from '../constants';import { Methods } from '../bridge/protocol';
 import type { QueryExecuteResult } from '../bridge/protocol';
 import { profileLabel, type ConnectionProfile } from '../model/ConnectionProfile';
+import type { TableDetail } from '../model/tableDetails';
 import type { DatabaseTreeNode, TableNode } from '../tree/nodeTypes';
 import { qualifiedName } from '../tree/nodeTypes';
 import type { HistoryNode } from '../tree/HistoryTreeProvider';
@@ -503,6 +504,8 @@ async function runCustomAction(
     schema: target.schema,
     table: target.table,
     column: target.column,
+    remark: target.remark,
+    details: target.details,
     connectionName: profileLabel(profile),
     quote,
   });
@@ -542,6 +545,15 @@ function actionTargetOf(node: DatabaseTreeNode | undefined):
       schema?: string;
       table: string;
       column?: string;
+      /**
+       * The comment of whatever the action runs on: the table's, or the column's for a column node.
+       *
+       * Carried on the target rather than looked up later because the tree already read it, and a second
+       * round trip to fetch something the user can see on screen would be a strange way to spend a query.
+       */
+      remark?: string;
+      /** The extra fields the metadata rule returned for the table. */
+      details?: readonly TableDetail[];
     }
   | undefined {
   if (!node) {
@@ -556,6 +568,8 @@ function actionTargetOf(node: DatabaseTreeNode | undefined):
         catalog: node.catalog,
         schema: node.schema,
         table: node.table.name,
+        remark: node.table.remarks,
+        details: node.table.details,
       };
     case 'column':
       return {
@@ -565,6 +579,8 @@ function actionTargetOf(node: DatabaseTreeNode | undefined):
         schema: node.schema,
         table: node.table,
         column: node.column.name,
+        remark: node.column.remarks,
+        details: node.details,
       };
     default:
       return undefined;
@@ -839,6 +855,8 @@ async function showDdlFromQuery(
     catalog: table.catalog,
     schema: table.schema,
     table: table.table.name,
+    remark: table.table.remarks,
+    details: table.table.details,
     connectionName: profileLabel(profile),
     quote,
   });

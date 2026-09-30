@@ -199,8 +199,11 @@ INSERT INTO users (|        -- 补全列名
 - 重新连接同名同目标的连接会**复用**连接池,不会泄漏
 - 改密码后会自动重建连接
 - 数据库树按 `目录 → schema → 表/视图 → 列/索引` 展开,单层结构会自动折叠
-- **筛选**:视图标题栏的筛选按钮按名称过滤表、视图、列、索引;生效时视图描述会显示
-  `filter: 关键字`,避免把`过滤后的空列表`误认为`库里没东西`。清除用旁边的按钮
+- **表/视图的中文名**:数据库给了注释时,注释显示在表名后面(`orders  订单`),悬浮提示里给出完整注释与
+  这条规则额外带回来的字段。物理名保持不变 —— 那才是你要写进 SQL 的东西
+- **筛选**:视图标题栏的筛选按钮按名称过滤表、视图、列、索引,**中文名与附加信息也参与匹配**
+  (输入“订单”能找到 `orders`);生效时视图描述会显示 `filter: 关键字`,
+  避免把`过滤后的空列表`误认为`库里没东西`。清除用旁边的按钮
 
 ### SQL 智能补全
 
@@ -273,18 +276,25 @@ PostgreSQL 的库上可能要几分钟,而等价的 `information_schema` 查询�
 
 ```jsonc
 { "kind": "tables", "match": "jdbc:postgresql:*",
-  "sql": "SELECT table_schema AS TABLE_SCHEM, table_name AS TABLE_NAME, table_type AS TABLE_TYPE\n  FROM information_schema.tables WHERE table_schema = '${schema}'" }
+  "sql": "SELECT n.nspname AS TABLE_SCHEM, c.relname AS TABLE_NAME, 'TABLE' AS TABLE_TYPE,\n  pg_catalog.obj_description(c.oid, 'pg_class') AS REMARKS, c.reltuples::bigint AS EST_ROWS\n  FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace\n  WHERE n.nspname = '${schema}'" }
 ```
 
 - `kind` 是 `schemas` 或 `tables`;`match` 是对连接 URL 的 glob,第一条命中生效,没命中就回到驱动元数据
   (所以默认行为不变)
 - 占位符 `${catalog}`、`${schema}`、`${namePattern}`;填不出来时**这条规则根本不执行** ——
   去掉一个过滤条件换来的是错的行,不是更少的行
-- 结果按列名读,用的是 JDBC 对同一批数据使用的名字(表列表:`TABLE_SCHEM`/`TABLE_NAME`/`TABLE_TYPE`/`REMARKS`;
+- 结果按列名读,用的是 JDBC 对同一批数据使用的名字(表列表:`TABLE_SCHEM`/`TABLE_NAME`/`TABLE_TYPE`;
   模式列表:`TABLE_SCHEM`),把你的列别名成这些名字即可
+- **表注释 = 树上的中文名**:别名成 `REMARKS`、`TABLE_COMMENT`、`COMMENT` 任意一个都会被认作注释
+  (都有值时按这个顺序取),显示在表名后面,筛选也匹配它,自定义 SQL 里可以用 `${remark}` 取到
+  —— 中文 schema 上往往只有注释才是人能认的名字
+- **其它列一律保留**:你不是 select 了 `EST_ROWS`、`ENGINE` 这种列吗?它们不会丢,会按你 select 的顺序
+  展示在节点悬浮提示里(`EST_ROWS: 12000`),而且**可以直接当占位符用**:别名 `EST_ROWS` 对应
+  `${EST_ROWS}`,自定义动作与 DDL 规则里都能写。这就是这个设置可扩展的地方:目录表里有用的东西,
+  不用等插件认识那个库就能显示出来、用起来
 - 规则执行失败、或返回的行里没有能识别的名字列,日志会提示一次,并**回落**到驱动元数据 ——
   写错的 SELECT 不该让整棵树变空
-- **DB Client: Install Metadata SQL Examples** 会把 PostgreSQL/openGauss 的示例规则写进用户设置
+- **DB Client: Install Metadata SQL Examples** 会把 PostgreSQL、openGauss、MySQL 的示例规则写进用户设置
   (安装后一键就有默认可改),而不是替所有人默认打开
 - `metadata.timeoutSeconds`(默认 30)控制等多久就放弃。驱动内部的目录查询**无法取消**,
   所以超时只意味着插件不再等 —— 提示里会直接告诉你用上面这条设置换一条更快的 SQL
@@ -315,8 +325,11 @@ PostgreSQL 的库上可能要几分钟,而等价的 `information_schema` 查询�
 
 | 用途 | 写法 | 展开成 |
 |---|---|---|
-| 字符串字面量里 / Hive 的 `DESC` 后 | `${table}` `${schema}` `${catalog}` `${qualified}` `${column}` | 驱动上报的**原始名字**,不加引号 |
+| 字符串字面量里 / Hive 的 `DESC` 后 | `${table}` `${schema}` `${catalog}` `${qualified}` `${column}` `${remark}` | 驱动上报的**原始名字**,不加引号 |
 | 需要标识符的位置 | `${quotedTable}` `${quotedSchema}` `${quotedCatalog}` `${quotedQualified}` `${quotedColumn}` | 用数据库上报的引号字符包裹 |
+
+`${remark}` 是表注释(建议在元数据规则里把它取出来),没有注释时**用到它的规则会被跳过**,而不是去掉它照跑。
+元数据规则里 select 出来的其它列同样可以直接引用,名字就是你在规则里写的别名。
 
 搞反了的后果:`pg_get_tabledef('${quotedQualified}')` 会去找一张**名字里带引号**的表,不报语法错,只是找不到。
 `${qualified}` 在没有 schema 的库上不会产生开头的点(`DESC .table` 那种)。
@@ -354,12 +367,15 @@ PostgreSQL 的库上可能要几分钟,而等价的 `information_schema` 查询�
 ]
 ```
 
-占位符与 DDL 查询**完全一致**(原始名 / 加引号名两套),见上面的表。
+占位符与 DDL 查询**完全一致**(原始名 / 加引号名两套),见上面的表。`${remark}` 在这里是**对象自己的注释**
+—— 表上是表注释,列上是列注释 —— 适合做“按中文名找对象”的动作,例如
+`SELECT * FROM ${quotedQualified} WHERE c_name LIKE '%${remark}%'`。
+另外,元数据规则带回来的**附加字段也能用** —— 名字就是你规则里的别名(如 `${EST_ROWS}`)。
 
 三个细节是刻意的:
 
 - **填不上的占位符会阻止动作,而不是变成空**。`LIKE '%${column}%'` 展开成 `LIKE '%%'` 会静默匹配所有行,
-  比直接拒绝危险得多
+  比直接拒绝危险得多;`${remark}` 在数据库没给注释时同样拒绝
 - **语句会在一个已绑定连接的编辑器里打开,而不是静默执行**。这样你能看到跑的是什么、改完再跑
 - **没有 `appliesTo` 的动作在所有节点上出现**;写了就只在列出的类型上出现
 
@@ -511,7 +527,7 @@ Markdown 报告,包含:
 
 | 设置 | 类型 | 默认 | 说明 |
 |---|---|---|---|
-| `metadata.queries` | array | `[]` | 自己写的模式/表查询 SQL,见[树里的模式/表查询也可以自己写](#树里的模式表查询也可以自己写推荐给慢库) |
+| `metadata.queries` | array | `[]` | 自己写的模式/表查询 SQL(可带回表注释与附加字段),见[树里的模式/表查询也可以自己写](#树里的模式表查询也可以自己写推荐给慢库) |
 | `metadata.timeoutSeconds` | number | `30` | 等元数据读取多久后放弃;`0` 表示一直等 |
 
 ### 健康监控

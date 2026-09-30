@@ -156,7 +156,7 @@ export class JdbcBridge implements vscode.Disposable {
     }
 
     this.setState('stopping');
-    log.info('Stopping the JDBC bridge');
+    log.info(t('Stopping the JDBC bridge'));
 
     try {
       child.stdin.write(`${JSON.stringify({ id: 'shutdown', method: Methods.shutdown, params: {} })}\n`);
@@ -165,7 +165,7 @@ export class JdbcBridge implements vscode.Disposable {
     }
 
     if (!(await waitForExit(child, SHUTDOWN_GRACE_MS))) {
-      log.debug('The JDBC bridge did not exit in time; terminating it');
+      log.debug(t('The JDBC bridge did not exit in time; terminating it'));
       child.kill();
       await waitForExit(child, 2_000);
     }
@@ -199,7 +199,7 @@ export class JdbcBridge implements vscode.Disposable {
     const java = await locateJava();
     const args = this.buildArgs(jarPath);
 
-    log.info(`Starting the JDBC bridge with ${java.executable}`);
+    log.info(t('Starting the JDBC bridge with {0}', java.executable));
     log.debug(`Bridge arguments: ${args.join(' ')}`);
 
     let child: ChildProcessWithoutNullStreams;
@@ -307,7 +307,7 @@ export class JdbcBridge implements vscode.Disposable {
   }
 
   private onProcessError(error: Error): void {
-    log.error(error, 'The JDBC bridge process reported an error');
+      log.error(error, t('The JDBC bridge process reported an error'));
   }
 
   private onProcessExit(code: number | null, signal: NodeJS.Signals | null): void {
@@ -325,18 +325,25 @@ export class JdbcBridge implements vscode.Disposable {
     }
 
     const summary = `code ${code ?? 'null'}, signal ${signal ?? 'none'}`;
-    log.warn(`The JDBC bridge exited unexpectedly (${summary}).${this.stderrHint()}`);
+log.warn(t('The JDBC bridge exited unexpectedly ({0}).{1}', summary, this.stderrHint()));
 
     // Only restart a process that had been working. A bridge that dies during startup - a bad jar,
     // an incompatible driver - would otherwise be relaunched in a loop.
     if (wasReady && this.autoRestarts < MAX_AUTO_RESTARTS) {
       this.autoRestarts++;
       const delay = AUTO_RESTART_DELAY_MS * this.autoRestarts;
-      log.info(`Restarting the JDBC bridge in ${delay} ms (attempt ${this.autoRestarts} of ${MAX_AUTO_RESTARTS}).`);
+      log.info(
+        t(
+          'Restarting the JDBC bridge in {0} ms (attempt {1} of {2}).',
+          delay,
+          this.autoRestarts,
+          MAX_AUTO_RESTARTS,
+        ),
+      );
       this.restartTimer = setTimeout(() => {
         this.restartTimer = undefined;
         void this.ensureStarted().catch((error: unknown) => {
-          log.error(error, 'The automatic restart of the JDBC bridge failed');
+          log.error(error, t('The automatic restart of the JDBC bridge failed'));
           this.setState('failed');
         });
       }, delay);

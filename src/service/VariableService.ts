@@ -66,7 +66,7 @@ export class VariableService implements vscode.Disposable {
           source,
         ),
       );
-      log.warn(`Ignoring the variable pattern '${source}': it does not compile`);
+      log.warn(t("Ignoring the variable pattern '{0}': it does not compile", source));
     }
     return compiled;
   }

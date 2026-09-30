@@ -100,15 +100,21 @@ export class DriverManager implements vscode.Disposable {
 
     for (const failure of this.failures) {
       log.warn(
-        `Driver not loaded${failure.driverClassName ? ` (${failure.driverClassName})` : ''}` +
-          `${failure.jar ? ` from ${failure.jar}` : ''}: ${failure.message}`,
+        t(
+          'Driver not loaded ({0}) from {1}: {2}',
+          failure.driverClassName ?? t('an unknown class name'),
+          failure.jar ?? t('an unknown jar'),
+          failure.message,
+        ),
       );
     }
     for (const stale of result.staleDrivers ?? []) {
-      log.warn(`Driver '${stale}' was replaced or removed; connections using it were closed`);
+      log.warn(
+        t("Driver '{0}' was replaced or removed; connections using it were closed", stale),
+      );
     }
 
-    log.info(`Loaded ${this.drivers.length} JDBC driver(s)`);
+    log.info(t('Loaded {0} JDBC driver(s)', this.drivers.length));
     this.emitter.fire();
     return result;
   }
@@ -142,7 +148,9 @@ export class DriverManager implements vscode.Disposable {
       for (const jar of await listJarsIn(folder)) {
         found.add(jar);
         if (found.size >= MAX_JARS) {
-          log.warn(`Stopped after ${MAX_JARS} driver jars; check the 'driverPaths' setting`);
+          log.warn(
+            t("Stopped after {0} driver jars; check the 'driverPaths' setting", MAX_JARS),
+          );
           break;
         }
       }
@@ -151,7 +159,7 @@ export class DriverManager implements vscode.Disposable {
       if (await isFile(file)) {
         found.add(file);
       } else {
-        log.warn(`'driverPaths' entry is not a file: ${file}`);
+        log.warn(t("'driverPaths' entry is not a file: {0}", file));
       }
     }
 
@@ -211,9 +219,9 @@ export class DriverManager implements vscode.Disposable {
         }
         await copyFile(uri.fsPath, target);
         copied.push(target);
-        log.info(`Copied driver jar into the driver folder: ${basename(target)}`);
+        log.info(t('Copied driver jar into the driver folder: {0}', basename(target)));
       } catch (error) {
-        log.error(error, `Could not copy ${uri.fsPath}`);
+        log.error(error, t('Could not copy {0}', uri.fsPath));
         void vscode.window.showErrorMessage(
           t('Could not copy {0}: {1}', basename(uri.fsPath), describeError(error)),
         );
@@ -275,9 +283,11 @@ export class DriverManager implements vscode.Disposable {
             const target = join(folder, fileName);
             await writeFile(target, bytes);
             downloaded.push(target);
-            log.info(`Downloaded ${fileName} (${(bytes.length / 1024).toFixed(0)} KiB) from ${url}`);
+            log.info(
+              t('Downloaded {0} ({1} KiB) from {2}', fileName, (bytes.length / 1024).toFixed(0), url),
+            );
           } catch (error) {
-            log.error(error, `Could not download ${request}`);
+            log.error(error, t('Could not download {0}', request));
             void vscode.window.showErrorMessage(
               t('Could not download {0}: {1}', request, describeError(error)),
             );
@@ -337,7 +347,7 @@ async function listJarsIn(folder: string): Promise<string[]> {
       .sort();
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-      log.warn(`Could not read the driver folder ${folder}: ${describeError(error)}`);
+      log.warn(t('Could not read the driver folder {0}: {1}', folder, describeError(error)));
     }
     return [];
   }

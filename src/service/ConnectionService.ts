@@ -139,7 +139,14 @@ export class ConnectionService implements vscode.Disposable {
         connectedAt: Date.now(),
         connectMillis: result.connectMillis,
       });
-      log.info(`Connected '${profile.name}' in ${result.connectMillis} ms: ${result.capabilities.description}`);
+      log.info(
+        t(
+          "Connected '{0}' in {1} ms: {2}",
+          profile.name,
+          result.connectMillis,
+          result.capabilities.description,
+        ),
+      );
       return result;
     } catch (error) {
       const message = describeError(error);

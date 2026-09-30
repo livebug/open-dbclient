@@ -82,6 +82,19 @@ export interface TableReference extends ObjectReference {
 }
 
 /**
+ * What a rule run is about, for its log line.
+ *
+ * Passed as parts rather than as one finished phrase because the phrase is language-dependent: assembling
+ * `columns of public.orders` in English and then dropping it into a sentence makes one half-translated line.
+ */
+interface RuleRun {
+  readonly kind: MetadataQueryKind;
+  /** The object, e.g. `public.orders`, or empty when the run is about the whole connection. */
+  readonly scope: string;
+  readonly connection: string;
+}
+
+/**
  * Typed access to the bridge's metadata methods.
  *
  * A thin layer, but a deliberate one: it gives the tree, the SQL completion cache and the export
@@ -108,7 +121,7 @@ export class MetadataService {
     }
 
     log.debug(
-      `Reading the catalogs of ${request.connectionName ?? request.connectionId} from the driver's metadata`,
+      t("Reading the catalogs of {0} from the driver's metadata", connectionLabel(request)),
     );
     const result = await this.request<{ catalogs: string[] }>(Methods.metadataCatalogs, {
       connectionId: request.connectionId,
@@ -125,7 +138,7 @@ export class MetadataService {
     const params: Record<string, unknown> = { connectionId: request.connectionId };
     putIfPresent(params, 'catalog', request.catalog);
 
-    log.debug(`Reading the schemas${onConnection(request.connectionName)} from the driver's metadata`);
+    log.debug(t("Reading the schemas on {0} from the driver's metadata", connectionLabel(request)));
     const result = await this.request<{ schemas: string[] }>(Methods.metadataSchemas, params);
     return result.schemas ?? [];
   }
@@ -137,7 +150,9 @@ export class MetadataService {
       return fromRule;
     }
 
-    log.debug(`Reading the table types of ${request.connectionName ?? request.connectionId} from the driver's metadata`);
+    log.debug(
+      t("Reading the table types of {0} from the driver's metadata", connectionLabel(request)),
+    );
     const result = await this.request<{ tableTypes: string[] }>(Methods.metadataTableTypes, {
       connectionId: request.connectionId,
     });
@@ -161,7 +176,11 @@ export class MetadataService {
     }
 
     log.debug(
-      `Reading the tables of ${subjectOf(request) || 'the connection'}${onConnection(request.connectionName)} from the driver's metadata`,
+      t(
+        "Reading the tables of {0} on {1} from the driver's metadata",
+        describeScope(subjectOf(request)),
+        connectionLabel(request),
+      ),
     );
     const result = await this.request<{ tables: TableInfo[] }>(Methods.metadataTables, params);
     return result.tables ?? [];
@@ -176,7 +195,13 @@ export class MetadataService {
     // Logged at debug because a tree expansion asks for these constantly, and the answer to "why is this
     // slow" is in the health report's timings rather than in a line per table. It is here for the other
     // question: whether the rule the user configured is being used at all.
-    log.debug(`Reading the columns of ${subjectOf(reference)}${onConnection(reference.connectionName)} from the driver's metadata`);
+    log.debug(
+      t(
+        "Reading the columns of {0} on {1} from the driver's metadata",
+        subjectOf(reference),
+        connectionLabel(reference),
+      ),
+    );
     const result = await this.request<{ columns: ColumnInfo[] }>(
       Methods.metadataColumns,
       withTable(reference),
@@ -190,7 +215,13 @@ export class MetadataService {
       return fromRule;
     }
 
-    log.debug(`Reading the indexes of ${subjectOf(reference)}${onConnection(reference.connectionName)} from the driver's metadata`);
+    log.debug(
+      t(
+        "Reading the indexes of {0} on {1} from the driver's metadata",
+        subjectOf(reference),
+        connectionLabel(reference),
+      ),
+    );
     const result = await this.request<{ indexes: IndexInfo[] }>(
       Methods.metadataIndexes,
       withTable(reference),
@@ -247,7 +278,7 @@ export class MetadataService {
     for (const problem of parsed.problems) {
       if (!this.reported.has(problem)) {
         this.reported.add(problem);
-        log.warn(`Metadata query definition ignored: ${problem}`);
+        log.warn(t('Metadata query definition ignored: {0}', problem));
       }
     }
     if (parsed.queries.length === 0 || !url) {
@@ -263,7 +294,7 @@ export class MetadataService {
     rule: MetadataQuery,
     connectionId: string,
     values: MetadataQueryValues,
-    subject: string,
+    run: RuleRun,
   ): Promise<MetadataResult | undefined> {
     const expanded = expandMetadataSql(rule.sql, values);
     if (expanded.missing.length > 0) {
@@ -271,7 +302,11 @@ export class MetadataService {
       // quickly, and a tree showing the wrong tables is worse than a slow one.
       this.reportOnce(
         `rule-missing-${rule.id}`,
-        `The metadata query '${rule.id}' uses ${expanded.missing.join(', ')}, which is not available for this read; the driver's metadata is used instead.`,
+        t(
+          "The metadata query '{0}' uses {1}, which is not available for this read; the driver's metadata is used instead.",
+          rule.id,
+          expanded.missing.join(', '),
+        ),
       );
       return undefined;
     }
@@ -280,7 +315,15 @@ export class MetadataService {
     // wrote but the extension chose and filled in, so "which statement actually ran" has to be answerable
     // from the output channel, and the placeholders are the reason: the statement in the settings is not
     // the statement that went to the database.
-    log.info(`Reading ${subject} with metadata query '${rule.id}': ${summarizeSql(expanded.sql)}`);
+    log.info(
+      t(
+        "Running metadata query '{0}' for {1} on '{2}': {3}",
+        rule.id,
+        describeSubject(run.kind, run.scope),
+        run.connection,
+        summarizeSql(expanded.sql),
+      ),
+    );
 
     try {
       return await this.runQuery(connectionId, expanded.sql);
@@ -289,7 +332,11 @@ export class MetadataService {
       // is there, and a mistake in a SELECT is not a reason to show an empty database.
       this.reportOnce(
         `rule-failed-${rule.id}`,
-        `The metadata query '${rule.id}' failed (${describeError(error)}); the driver's metadata is used instead.`,
+        t(
+          "The metadata query '{0}' failed ({1}); the driver's metadata is used instead.",
+          rule.id,
+          describeError(error),
+        ),
       );
       return undefined;
     }
@@ -313,7 +360,7 @@ export class MetadataService {
       return undefined;
     }
 
-    const subject = `${kind} of ${subjectOf(reference)}${onConnection(reference.connectionName)}`;
+    const subject = { kind, scope: subjectOf(reference), connection: connectionLabel(reference) };
     const result = await this.runRule(
       rule,
       reference.connectionId,
@@ -333,7 +380,11 @@ export class MetadataService {
     if (mapped.length === 0 && result.rows.length > 0) {
       this.reportOnce(
         `rule-columns-${rule.id}`,
-        `The metadata query '${rule.id}' returned rows but no ${nameColumn} column, so it was ignored.`,
+        t(
+          "The metadata query '{0}' returned rows but no {1} column, so it was ignored.",
+          rule.id,
+          nameColumn,
+        ),
       );
       return undefined;
     }
@@ -422,12 +473,11 @@ export class MetadataService {
     const scope = [values.catalog, values.schema, values.table]
       .filter((part): part is string => part !== undefined && part !== '')
       .join('.');
-    const result = await this.runRule(
-      rule,
-      request.connectionId,
-      values,
-      `${scope === '' ? kind : `${kind} of ${scope}`}${onConnection(request.connectionName)}`,
-    );
+    const result = await this.runRule(rule, request.connectionId, values, {
+      kind,
+      scope,
+      connection: connectionLabel(request),
+    });
     if (!result) {
       return undefined;
     }
@@ -441,7 +491,11 @@ export class MetadataService {
       // worth saying out loud rather than reporting as a database with no schemas.
       this.reportOnce(
         `rule-columns-${rule.id}`,
-        `The metadata query '${rule.id}' returned rows but no ${missingColumn} column, so it was ignored.`,
+        t(
+          "The metadata query '{0}' returned rows but no {1} column, so it was ignored.",
+          rule.id,
+          missingColumn,
+        ),
       );
       return undefined;
     }
@@ -474,8 +528,11 @@ export class MetadataService {
         schema: request.schema,
         namePattern: request.namePattern,
       },
-      `tables${request.schema || request.catalog ? ` of ${request.schema || request.catalog}` : ''}` +
-        onConnection(request.connectionName),
+      {
+        kind: 'tables',
+        scope: request.schema || request.catalog || '',
+        connection: connectionLabel(request),
+      },
     );
     if (!result) {
       return undefined;
@@ -487,7 +544,11 @@ export class MetadataService {
     if (described.length === 0 && result.rows.length > 0) {
       this.reportOnce(
         `rule-columns-${rule.id}`,
-        `The metadata query '${rule.id}' returned rows but no TABLE_NAME column, so it was ignored.`,
+        t(
+          "The metadata query '{0}' returned rows but no {1} column, so it was ignored.",
+          rule.id,
+          'TABLE_NAME',
+        ),
       );
       return undefined;
     }
@@ -541,14 +602,49 @@ function subjectOf(reference: { schema?: string; table?: string }): string {
 }
 
 /**
- * ` on 'Production'`, or nothing when the caller had no name to give.
+ * How a read names its connection in the log.
  *
- * Every line this service logs about a read says which connection it was for: the url and the id are not
- * things a person reading the output channel recognises, and "which connection was that?" is the first
- * question a log is read to answer.
+ * The name the user chose where there is one, and the id otherwise: the id is at least something to search
+ * the log for, and a line that hides which connection it was about cannot be acted on.
  */
-function onConnection(name: string | undefined): string {
-  return name === undefined || name === '' ? '' : ` on '${name}'`;
+function connectionLabel(request: { connectionId: string; connectionName?: string }): string {
+  return request.connectionName ?? request.connectionId;
+}
+
+/** What a read was about when it named no object at all: the whole connection. */
+function describeScope(scope: string): string {
+  return scope === '' ? t('the connection') : scope;
+}
+
+/** What a rule run was about, in words: `columns of public.orders`. */
+function describeSubject(kind: MetadataQueryKind, scope: string): string {
+  return scope === ''
+    ? kindLabel(kind)
+    : t('{0} of {1}', kindLabel(kind), scope);
+}
+
+/**
+ * The kind of read, in words.
+ *
+ * A switch rather than a table built at import time: `t` reads the locale, and the locale is set when the
+ * extension activates - a table built while the module is first imported would freeze whichever language
+ * happened to be current then.
+ */
+function kindLabel(kind: MetadataQueryKind): string {
+  switch (kind) {
+    case 'tables':
+      return t('tables');
+    case 'schemas':
+      return t('schemas');
+    case 'columns':
+      return t('columns');
+    case 'indexes':
+      return t('indexes');
+    case 'catalogs':
+      return t('catalogs');
+    case 'tableTypes':
+      return t('table types');
+  }
 }
 
 /**

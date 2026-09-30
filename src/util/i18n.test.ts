@@ -81,3 +81,37 @@ test('the placeholder numbers a translation uses exist in its English text', () 
     }
   }
 });
+
+test('log lines go through the same catalog as the UI', () => {
+  setLocale('zh-cn');
+  // The output channel is where "why is this slow?" is answered, so a Chinese UI with an English log is a
+  // gap a user notices. These are the lines they read while working out which read to replace with SQL.
+  assert.equal(
+    t("Reading the columns of {0} on {1} from the driver's metadata", 'public.orders', 'Production'),
+    '从驱动元数据读取连接 Production 上 public.orders 的列',
+  );
+  assert.equal(
+    t(
+      "Running metadata query '{0}' for {1} on '{2}': {3}",
+      'fast-columns',
+      t('columns'),
+      'Production',
+      'SELECT 1',
+    ),
+    '用元数据查询「fast-columns」读取 列(连接「Production」):SELECT 1',
+  );
+  assert.equal(
+    t("Finished in {0} ms on '{1}': {2}", 42, 'Production', t('{0} row(s)', '1,204')),
+    '在「Production」上完成,用时 42 ms:1,204 行',
+  );
+});
+
+test('a subject is assembled from parts so each language can order them', () => {
+  setLocale('zh-cn');
+  // `columns of public.orders` reads as `public.orders 的列`: the order comes from the catalog rather than
+  // from the call site, which is why a rule log line is passed a kind and a scope instead of a phrase.
+  assert.equal(t('{0} of {1}', t('columns'), 'public.orders'), 'public.orders 的列');
+
+  setLocale('en');
+  assert.equal(t('{0} of {1}', t('columns'), 'public.orders'), 'columns of public.orders');
+});

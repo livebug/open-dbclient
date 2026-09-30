@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 
 import { describeError, log } from '../util/logger';
+import { t } from '../util/i18n';
 import { mergeById, readEntries } from '../util/configMerge';
 
 /**
@@ -50,7 +51,11 @@ export class ConnectionTemplates {
     const templates = mergeById(bundled, user);
     if (user.length > 0) {
       log.info(
-        `Merged ${user.length} user connection template(s) over ${bundled.length} bundled one(s)`,
+        t(
+          'Merged {0} user connection template(s) over {1} bundled one(s)',
+          user.length,
+          bundled.length,
+        ),
       );
     }
     return new ConnectionTemplates(templates);

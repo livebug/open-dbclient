@@ -126,7 +126,7 @@ async function installMetadataQueries(): Promise<void> {
     [...current, ...examples],
     vscode.ConfigurationTarget.Global,
   );
-  log.info(`Added ${examples.length} example metadata query rule(s) to the user settings`);
+  log.info(t('Added {0} example metadata query rule(s) to the user settings', examples.length));
 
   const open = await vscode.window.showInformationMessage(
     t('Added {0} example metadata query rule(s).', examples.length),
@@ -366,8 +366,14 @@ async function runSingleStatement(
     }
 
     log.info(
-      `Finished in ${result.elapsedMillis} ms on '${profileLabel(profile)}': ` +
-        `${result.hasResultSet ? `${(result.totalRows ?? 0).toLocaleString()} row(s)` : `${result.updateCount ?? 0} row(s) affected`}`,
+      t(
+        "Finished in {0} ms on '{1}': {2}",
+        result.elapsedMillis,
+        profileLabel(profile),
+        result.hasResultSet
+          ? t('{0} row(s)', (result.totalRows ?? 0).toLocaleString())
+          : t('{0} row(s) affected', result.updateCount ?? 0),
+      ),
     );
 
     // A statement that changed the schema invalidates what the tree is showing.
@@ -439,12 +445,23 @@ async function runTablePreview(
     );
     panel.setResult(result, sql, profileLabel(profile));
     log.info(
-      `Finished in ${result.elapsedMillis} ms on '${profileLabel(profile)}': ` +
-        `${(result.totalRows ?? 0).toLocaleString()} row(s)`,
+      t(
+        "Finished in {0} ms on '{1}': {2}",
+        result.elapsedMillis,
+        profileLabel(profile),
+        t('{0} row(s)', (result.totalRows ?? 0).toLocaleString()),
+      ),
     );
   } catch (error) {
     panel.setError(error, sql, profileLabel(profile));
-    log.warn(`Failed on '${profileLabel(profile)}': ${summarizeSql(sql)} - ${describeError(error)}`);
+    log.warn(
+      t(
+        "Failed on '{0}': {1} - {2}",
+        profileLabel(profile),
+        summarizeSql(sql),
+        describeError(error),
+      ),
+    );
   }
 }
 
@@ -468,7 +485,7 @@ async function runCustomAction(
     vscode.workspace.getConfiguration().get<unknown>(Config.customActions),
   );
   for (const problem of parsed.problems) {
-    log.warn(`Custom action definition ignored: ${problem}`);
+    log.warn(t('Custom action definition ignored: {0}', problem));
   }
 
   const applicable = parsed.actions.filter((action) => appliesTo(action, target.kind));
@@ -619,7 +636,7 @@ async function cancelCurrent(dependencies: CommandDependencies): Promise<void> {
 
   try {
     await dependencies.bridge.request(Methods.queryCancel, { queryId });
-    log.info(`Cancellation requested for '${queryId}'`);
+    log.info(t("Cancellation requested for '{0}'", queryId));
   } catch (error) {
     void vscode.window.showErrorMessage(
       t('Could not cancel the statement: {0}', describeError(error)),
@@ -858,7 +875,7 @@ function ddlQueryRules(): ReturnType<typeof parseDdlQueries>['queries'] {  const
     vscode.workspace.getConfiguration().get<unknown>(Config.ddlQueries),
   );
   for (const problem of parsed.problems) {
-    log.warn(`DDL query definition ignored: ${problem}`);
+    log.warn(t('DDL query definition ignored: {0}', problem));
   }
   return parsed.queries;
 }
@@ -905,7 +922,15 @@ async function showDdlFromQuery(
 
   const sql = expandAction(rule.sql, context);
   const queryId = nextQueryId();
-  log.info(`Reading the DDL of '${path}' on '${profileLabel(profile)}' with ${rule.id}: ${summarizeSql(sql)}`);
+  log.info(
+    t(
+      "Reading the DDL of '{0}' on '{1}' with {2}: {3}",
+      path,
+      profileLabel(profile),
+      rule.id,
+      summarizeSql(sql),
+    ),
+  );
 
   const result = await vscode.window.withProgress(
     { location: vscode.ProgressLocation.Notification, title: t('Reading the DDL of {0}', path) },

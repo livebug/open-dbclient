@@ -197,12 +197,20 @@ export class ExportService {
         if (!missing || !source.queryId || !source.sql) {
           throw error;
         }
-        log.info(`Result ${source.queryId} is no longer cached; re-running the statement to export it`);
+        log.info(
+          t('Result {0} is no longer cached; re-running the statement to export it', source.queryId),
+        );
         result = await runExport({ sql: source.sql });
       }
 
       log.info(
-        `Exported ${result.rows} row(s)${on(source.connectionName)} to ${result.file} (${formatBytes(result.bytes)} in ${result.elapsedMillis} ms)`,
+        t(
+          'Exported {0} row(s) to {1} ({2} in {3} ms)',
+          result.rows,
+          result.file,
+          formatBytes(result.bytes),
+          result.elapsedMillis,
+        ) + on(source.connectionName),
       );
 
       if (result.unquotedFields && result.unquotedFields > 0) {
@@ -212,8 +220,11 @@ export class ExportService {
         // Written to the channel as well, because a toast is gone in seconds and this is about a file
         // that is already on disk. The channel line carries the full path, which the toast has no room for.
         log.warn(
-          `CSV quoting was 'never' and ${result.unquotedFields} field(s) written to ${result.file} ` +
-            'contain the separator, a quote or a line break; the file may not read back correctly',
+          t(
+            "CSV quoting was 'never' and {0} field(s) written to {1} contain the separator, a quote or a line break; the file may not read back correctly",
+            result.unquotedFields,
+            result.file,
+          ),
         );
         void vscode.window.showWarningMessage(
           t(
@@ -332,9 +343,14 @@ async function chooseCsvQuoting(configured: string): Promise<CsvQuoting | undefi
  *
  * An export runs over one connection and produces a file, and the file name alone does not say which
  * database it came from - which is the first thing somebody reading the log wants to know.
+ *
+ * A fragment rather than a placeholder inside the sentence above: it is a trailing clause, so both languages
+ * put it in the same place, and the sentence reads well with or without it.
  */
 function on(connectionName: string | undefined): string {
-  return connectionName === undefined || connectionName === '' ? '' : ` on '${connectionName}'`;
+  return connectionName === undefined || connectionName === ''
+    ? ''
+    : t(" on '{0}'", connectionName);
 }
 
 function normaliseDelimiter(value: string): string {

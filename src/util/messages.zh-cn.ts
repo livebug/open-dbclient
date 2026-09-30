@@ -388,4 +388,104 @@ export const ZH_CN: Record<string, string> = {
   'The JDBC bridge is missing from this installation (expected at {0}). Reinstall the extension, or run "npm run bridge:compile" in a development checkout.':
     '这份安装里缺少 JDBC 桥(应该在 {0})。请重新安装扩展,或者在开发用的检出目录里执行 "npm run bridge:compile"。',
   'The JDBC bridge is not running.': 'JDBC 桥没有在运行。',
+
+  // ---- 日志:桥与 Java ----
+  'Stopping the JDBC bridge': '正在停止 JDBC 桥',
+  'Starting the JDBC bridge with {0}': '正在启动 JDBC 桥:{0}',
+  'The JDBC bridge did not exit in time; terminating it': 'JDBC 桥没有及时退出,强制结束它',
+  'The JDBC bridge process reported an error': 'JDBC 桥进程报告了错误',
+  'The JDBC bridge exited unexpectedly ({0}).{1}': 'JDBC 桥意外退出({0})。{1}',
+  'Restarting the JDBC bridge in {0} ms (attempt {1} of {2}).':
+    '{0} ms 后重启 JDBC 桥(第 {1} 次,最多 {2} 次)。',
+  'The automatic restart of the JDBC bridge failed': '自动重启 JDBC 桥失败',
+  'Using Java {0} from {1} ({2})': '使用 Java {0}({1},{2})',
+  'Open DB Client activating ({0})': 'Open DB Client 正在激活({0})',
+  'Open DB Client activated': 'Open DB Client 已激活',
+  'Registering JDBC drivers failed': '注册 JDBC 驱动失败',
+
+  // ---- 日志:元数据读取与规则 ----
+  // 这类行是排查「为什么慢」的主要依据,所以中文里也保留连接名和对象名。
+  "Reading the catalogs of {0} from the driver's metadata": '从驱动元数据读取 {0} 的目录列表',
+  "Reading the schemas on {0} from the driver's metadata": '从驱动元数据读取 {0} 的模式列表',
+  "Reading the table types of {0} from the driver's metadata": '从驱动元数据读取 {0} 的表类型',
+  "Reading the tables of {0} on {1} from the driver's metadata":
+    '从驱动元数据读取连接 {1} 上 {0} 的表',
+  "Reading the columns of {0} on {1} from the driver's metadata":
+    '从驱动元数据读取连接 {1} 上 {0} 的列',
+  "Reading the indexes of {0} on {1} from the driver's metadata":
+    '从驱动元数据读取连接 {1} 上 {0} 的索引',
+  "Running metadata query '{0}' for {1} on '{2}': {3}":
+    '用元数据查询「{0}」读取 {1}(连接「{2}」):{3}',
+  'Metadata query definition ignored: {0}': '元数据查询定义已忽略:{0}',
+  "The metadata query '{0}' uses {1}, which is not available for this read; the driver's metadata is used instead.":
+    '元数据查询「{0}」用到了 {1},而这次读取拿不到它;改用驱动自己的元数据(会慢一些)。',
+  "The metadata query '{0}' failed ({1}); the driver's metadata is used instead.":
+    '元数据查询「{0}」失败({1});改用驱动自己的元数据。',
+  "The metadata query '{0}' returned rows but no {1} column, so it was ignored.":
+    '元数据查询「{0}」有返回行,但没有 {1} 列,已忽略。',
+  '{0} of {1}': '{1} 的{0}',
+  'the connection': '该连接',
+  tables: '表',
+  schemas: '模式',
+  columns: '列',
+  indexes: '索引',
+  catalogs: '目录',
+  'table types': '表类型',
+  'Completion cache: {0} table(s) for {1}': '补全缓存:连接 {1} 有 {0} 张表',
+  'Could not preload tables for completion: {0}': '预加载补全用的表列表失败:{0}',
+  "Could not load columns of '{0}': {1}": '读取 {0} 的列失败:{1}',
+  "Could not expand '{0}'": '展开「{0}」失败',
+
+  // ---- 日志:语句执行 ----
+  "Finished in {0} ms on '{1}': {2}": '在「{1}」上完成,用时 {0} ms:{2}',
+  '{0} row(s) affected': '影响 {0} 行',
+  "Failed on '{0}': {1} - {2}": '在「{0}」上失败:{1} - {2}',
+  "Cancellation requested for '{0}'": '已请求取消「{0}」',
+  'Added {0} example metadata query rule(s) to the user settings':
+    '已把 {0} 条示例元数据查询规则加入用户设置',
+  'Custom action definition ignored: {0}': '自定义动作定义已忽略:{0}',
+  'DDL query definition ignored: {0}': 'DDL 查询定义已忽略:{0}',
+  "Reading the DDL of '{0}' on '{1}' with {2}: {3}": '在「{1}」上用 {2} 读取「{0}」的 DDL:{3}',
+  "Connect to '{0}' did not succeed": '连接「{0}」没有成功',
+
+  // ---- 日志:驱动 ----
+  'Loaded {0} JDBC driver(s)': '已加载 {0} 个 JDBC 驱动',
+  'Driver not loaded ({0}) from {1}: {2}': '驱动未加载({0},来自 {1}):{2}',
+  'an unknown class name': '类名未知',
+  'an unknown jar': 'jar 未知',
+  "Driver '{0}' was replaced or removed; connections using it were closed":
+    '驱动「{0}」被替换或删除,用到它的连接已关闭',
+  "Stopped after {0} driver jars; check the 'driverPaths' setting":
+    '扫描到 {0} 个驱动 jar 后停止;请检查 driverPaths 设置',
+  "'driverPaths' entry is not a file: {0}": 'driverPaths 里的这一项不是文件:{0}',
+  'Copied driver jar into the driver folder: {0}': '已把驱动 jar 复制到驱动目录:{0}',
+  'Could not copy {0}': '复制 {0} 失败',
+  'Could not download {0}': '下载 {0} 失败',
+  'Downloaded {0} ({1} KiB) from {2}': '已下载 {0}({1} KiB),来自 {2}',
+  'Could not read the driver folder {0}: {1}': '读取驱动目录 {0} 失败:{1}',
+
+  // ---- 日志:连接 ----
+  'Loaded {0} saved connection(s)': '已加载 {0} 个保存的连接',
+  '{0} saved connection(s) were unusable and have been ignored':
+    '{0} 个保存的连接无法使用,已忽略',
+  'Could not read {0}; continuing without saved connections':
+    '读取 {0} 失败;本次会话没有可用的已保存连接',
+  "Added connection '{0}'": '已添加连接「{0}」',
+  "Updated connection '{0}'": '已更新连接「{0}」',
+  "Removed connection '{0}'": '已删除连接「{0}」',
+  "Connected '{0}' in {1} ms: {2}": '已连接「{0}」,用时 {1} ms:{2}',
+  " on '{0}'": '(连接「{0}」)',
+
+  // ---- 日志:导出 / 历史 / 变量 / 模板 ----
+  'Exported {0} row(s) to {1} ({2} in {3} ms)': '已导出 {0} 行到 {1}({2},用时 {3} ms)',
+  'Result {0} is no longer cached; re-running the statement to export it':
+    '结果 {0} 已不在缓存里,重新执行语句以便导出',
+  "CSV quoting was 'never' and {0} field(s) written to {1} contain the separator, a quote or a line break; the file may not read back correctly":
+    'CSV 引号策略是 never,而写入 {1} 的 {0} 个字段里含有分隔符、引号或换行;该文件可能无法正确读回',
+  'Query history could not be read: {0}': '读取查询历史失败:{0}',
+  'Clearing query history failed: {0}': '清空查询历史失败:{0}',
+  'Compacting query history failed: {0}': '整理查询历史失败:{0}',
+  "Ignoring the variable pattern '{0}': it does not compile": '忽略变量匹配式「{0}」:它无法编译',
+  'Merged {0} user connection template(s) over {1} bundled one(s)':
+    '已用 {0} 个用户连接模板覆盖 {1} 个内置模板',
 };

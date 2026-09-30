@@ -271,7 +271,7 @@ async function runConnect(
         );
       } catch {
         // connections.connect already reported the failure to the user.
-        log.debug(`Connect to '${profileLabel(profile)}' did not succeed`);
+        log.debug(t("Connect to '{0}' did not succeed", profileLabel(profile)));
       }
     },
   );

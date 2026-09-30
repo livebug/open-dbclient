@@ -181,7 +181,7 @@ export class DatabaseTreeProvider
     } catch (error) {
       // A failed expansion must not take the tree down. The node stays expandable so the user can
       // retry, and the reason lands in the log rather than in a modal dialog.
-      log.error(error, `Could not expand '${nodeLabel(node)}'`);
+      log.error(error, t("Could not expand '{0}'", nodeLabel(node)));
       return [];
     }
 

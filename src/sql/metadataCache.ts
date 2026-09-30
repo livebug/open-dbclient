@@ -1,6 +1,8 @@
 import type { ColumnInfo, TableInfo } from '../bridge/protocol';
 import type { MetadataService } from '../service/MetadataService';
 import type { ConnectionService } from '../service/ConnectionService';
+import { parseQualifiedName, scopeOfTable, type QualifiedTableName } from './qualifiedName';
+import { t } from '../util/i18n';
 import { log } from '../util/logger';
 
 /** The parts of a table listing that qualifier grouping needs. */
@@ -56,7 +58,15 @@ export class MetadataCache {
   private readonly tables = new Map<string, CachedTables>();
   private readonly columns = new Map<string, readonly CachedColumn[]>();
   private readonly columnOrder: string[] = [];
-  private readonly failedColumns = new Set<string>();
+  /**
+   * Connections whose table prefetch failed, so completion asks once instead of on every keystroke.
+   *
+   * Without this the failure left nothing behind - `tables` stayed empty - and completion, which runs on
+   * every keystroke, retried the whole listing each time. A rule that throws, or a bridge that is
+   * restarting, then cost one broken query per character typed. Cleared with the rest of a connection's
+   * state, so reconnecting or refreshing asks again.
+   */
+  private readonly failedTables = new Set<string>();
 
   private readonly tableLoads = new Map<string, Promise<void>>();
   private readonly columnLoads = new Map<string, Promise<readonly CachedColumn[]>>();
@@ -73,7 +83,7 @@ export class MetadataCache {
 
   /** Starts loading a connection's tables if they are not already loaded or in flight. */
   ensureTables(connectionId: string): Promise<void> {
-    if (this.tables.has(connectionId)) {
+    if (this.tables.has(connectionId) || this.failedTables.has(connectionId)) {
       return Promise.resolve();
     }
     const existing = this.tableLoads.get(connectionId);
@@ -86,19 +96,23 @@ export class MetadataCache {
     return load;
   }
 
-  /** Columns for a table, from the cache or loaded on demand. */
+  /**
+   * Columns for a table, from the cache or loaded on demand.
+   *
+   * The name may be qualified (`public.users`), which is how it is written in the statement, but the driver
+   * is asked about its parts - see {@link parseQualifiedName}. The cache is keyed on the same parts, so two
+   * tables of the same name in two schemas are two entries rather than one wrong one.
+   */
   async columnsFor(
     connectionId: string,
     table: string,
     limit: number,
   ): Promise<readonly CachedColumn[]> {
-    const key = `${connectionId}|${table.toLowerCase()}`;
+    const name = this.scoped(connectionId, parseQualifiedName(table));
+    const key = columnKey(connectionId, name);
     const cached = this.columns.get(key);
     if (cached) {
       return cached;
-    }
-    if (this.failedColumns.has(key)) {
-      return [];
     }
 
     const inFlight = this.columnLoads.get(key);
@@ -106,7 +120,7 @@ export class MetadataCache {
       return inFlight;
     }
 
-    const load = this.loadColumns(connectionId, table)
+    const load = this.loadColumns(connectionId, name)
       .then((columns) => {
         this.remember(key, columns, limit);
         return columns;
@@ -121,21 +135,17 @@ export class MetadataCache {
   invalidate(connectionId?: string): void {
     if (!connectionId) {
       this.tables.clear();
+      this.failedTables.clear();
       this.columns.clear();
       this.columnOrder.length = 0;
-      this.failedColumns.clear();
       return;
     }
 
     this.tables.delete(connectionId);
+    this.failedTables.delete(connectionId);
     for (const key of [...this.columns.keys()]) {
       if (key.startsWith(`${connectionId}|`)) {
         this.columns.delete(key);
-      }
-    }
-    for (const key of [...this.failedColumns]) {
-      if (key.startsWith(`${connectionId}|`)) {
-        this.failedColumns.delete(key);
       }
     }
   }
@@ -170,18 +180,30 @@ export class MetadataCache {
         defaultSchema: schemas.length === 1 ? schemas[0] : undefined,
         qualifiers: buildQualifiers(schemas, allTables),
       });
-      log.debug(`Completion cache: ${names.length} table(s) for '${connectionId}'`);
+      log.debug(
+        t(
+          'Completion cache: {0} table(s) for {1}',
+          names.length,
+          this.connections.displayNameOf(connectionId) ?? connectionId,
+        ),
+      );
     } catch (error) {
-      log.debug(`Could not preload tables for completion: ${String(error)}`);
+      // Remembered, because completion runs on every keystroke and this failed once already.
+      this.failedTables.add(connectionId);
+      log.debug(t('Could not preload tables for completion: {0}', String(error)));
     }
   }
 
-  private async loadColumns(connectionId: string, table: string): Promise<readonly CachedColumn[]> {
+  private async loadColumns(
+    connectionId: string,
+    name: QualifiedTableName,
+  ): Promise<readonly CachedColumn[]> {
     try {
       const columns: ColumnInfo[] = await this.metadata.columns({
         connectionId,
-        catalog: this.catalogFor(connectionId),
-        table,
+        catalog: name.catalog ?? this.catalogFor(connectionId),
+        schema: name.schema,
+        table: name.table,
         connectionName: this.connections.displayNameOf(connectionId),
         url: this.connections.urlOf(connectionId),
       });
@@ -192,9 +214,9 @@ export class MetadataCache {
         remarks: column.remarks,
       }));
     } catch (error) {
-      // Remembered so a table the driver cannot describe is not retried on every keystroke.
-      this.failedColumns.add(`${connectionId}|${table.toLowerCase()}`);
-      log.debug(`Could not load columns of '${table}': ${String(error)}`);
+      // The empty answer is remembered by the caller like any other - a name the driver cannot describe is
+      // not worth asking about again on the next keystroke - and this line says why it is empty.
+      log.debug(t("Could not load columns of '{0}': {1}", name.table, String(error)));
       return [];
     }
   }
@@ -216,11 +238,28 @@ export class MetadataCache {
       : this.connections.catalogOf(connectionId);
   }
 
-  /** Stores columns, evicting the least recently used entries beyond the limit. */
+  /**
+   * Fills in what the statement left out, from the table listing that is already in hand.
+   *
+   * A statement that says `orders` rather than `public.orders` names no schema, and a rule that filters on
+   * `${schema}` or `${schemaLiteral}` cannot be filled without one: it is refused, the driver answers instead,
+   * and the read the rule was written to make fast is slow again. The listing already knows which schema each
+   * table is in, so the completion list can name it even though the user did not - see {@link scopeOfTable}.
+   */
+  private scoped(connectionId: string, name: QualifiedTableName): QualifiedTableName {
+    const known = this.tables.get(connectionId);
+    return scopeOfTable(name, known?.qualifiers ?? [], known?.defaultSchema);
+  }
+
+  /**
+   * Stores columns, evicting the least recently used entries beyond the limit.
+   *
+   * An empty result is stored too, and that is the reason this is the only place that writes: a name that is
+   * not a table answers "no columns" however often it is asked, and in a `WITH x AS (...)` statement the
+   * qualifier `x` is such a name. Leaving the empty answers out meant the same query went to the database on
+   * every keystroke for as long as the user kept typing - exactly the traffic this cache exists to avoid.
+   */
   private remember(key: string, columns: readonly CachedColumn[], limit: number): void {
-    if (columns.length === 0) {
-      return;
-    }
     this.columns.set(key, columns);
 
     const existing = this.columnOrder.indexOf(key);
@@ -236,6 +275,11 @@ export class MetadataCache {
       }
     }
   }
+}
+
+/** One table's columns, keyed so that the same name in two schemas stays two entries. */
+function columnKey(connectionId: string, name: QualifiedTableName): string {
+  return `${connectionId}|${name.catalog ?? ''}|${name.schema ?? ''}|${name.table.toLowerCase()}`;
 }
 
 /**

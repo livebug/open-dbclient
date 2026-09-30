@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import * as vscode from 'vscode';
 
 import { describeError, log } from '../util/logger';
+import { t } from '../util/i18n';
 
 const HISTORY_FILE = 'query-history.jsonl';
 const MAX_ENTRIES = 500;
@@ -69,7 +70,7 @@ export class QueryHistoryStore implements vscode.Disposable {
         this.entries = [];
         return;
       }
-      log.warn(`Query history could not be read: ${describeError(error)}`);
+      log.warn(t('Query history could not be read: {0}', describeError(error)));
       this.entries = [];
     }
   }
@@ -117,7 +118,7 @@ export class QueryHistoryStore implements vscode.Disposable {
     try {
       await writeFile(this.storagePath(), '', 'utf8');
     } catch (error) {
-      log.warn(`Clearing query history failed: ${describeError(error)}`);
+      log.warn(t('Clearing query history failed: {0}', describeError(error)));
     }
   }
 
@@ -141,7 +142,7 @@ export class QueryHistoryStore implements vscode.Disposable {
       const lines = [...this.entries].reverse().map((entry) => JSON.stringify(entry));
       await writeFile(this.storagePath(), lines.length > 0 ? `${lines.join('\n')}\n` : '', 'utf8');
     } catch (error) {
-      log.warn(`Compacting query history failed: ${describeError(error)}`);
+      log.warn(t('Compacting query history failed: {0}', describeError(error)));
     }
   }
 

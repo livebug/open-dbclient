@@ -49,11 +49,14 @@ export class ConnectionStore implements vscode.Disposable {
       this.profiles = entries
         .map(normalizeProfile)
         .filter((profile): profile is ConnectionProfile => profile !== undefined);
-      log.info(`Loaded ${this.profiles.length} saved connection(s)`);
+      log.info(t('Loaded {0} saved connection(s)', this.profiles.length));
 
       if (this.profiles.length !== entries.length) {
         log.warn(
-          `${entries.length - this.profiles.length} saved connection(s) were unusable and have been ignored`,
+          t(
+            '{0} saved connection(s) were unusable and have been ignored',
+            entries.length - this.profiles.length,
+          ),
         );
       }
     } catch (error) {
@@ -63,7 +66,7 @@ export class ConnectionStore implements vscode.Disposable {
       }
       // A corrupt file must not take the extension down. It is left untouched so the user can
       // recover it by hand, and the session continues with no saved connections.
-      log.error(error, `Could not read ${file}; continuing without saved connections`);
+      log.error(error, t('Could not read {0}; continuing without saved connections', file));
       this.profiles = [];
       void vscode.window.showWarningMessage(
         t(
@@ -104,7 +107,7 @@ export class ConnectionStore implements vscode.Disposable {
     const profile: ConnectionProfile = { ...draft, id: draft.id ?? randomUUID() } as ConnectionProfile;
     this.profiles = [...this.profiles, profile];
     await this.persist();
-    log.info(`Added connection '${profileLabel(profile)}'`);
+    log.info(t("Added connection '{0}'", profileLabel(profile)));
     return profile;
   }
 
@@ -116,7 +119,7 @@ export class ConnectionStore implements vscode.Disposable {
     const updated = { ...existing, ...draft } as ConnectionProfile;
     this.profiles = this.profiles.map((profile) => (profile.id === updated.id ? updated : profile));
     await this.persist();
-    log.info(`Updated connection '${profileLabel(updated)}'`);
+    log.info(t("Updated connection '{0}'", profileLabel(updated)));
     return updated;
   }
 
@@ -128,7 +131,7 @@ export class ConnectionStore implements vscode.Disposable {
     this.profiles = this.profiles.filter((profile) => profile.id !== id);
     await this.deletePassword(id);
     await this.persist();
-    log.info(`Removed connection '${profileLabel(existing)}'`);
+    log.info(t("Removed connection '{0}'", profileLabel(existing)));
   }
 
   // ------------------------------------------------------------------

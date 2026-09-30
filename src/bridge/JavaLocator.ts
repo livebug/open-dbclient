@@ -111,7 +111,9 @@ export async function locateJava(): Promise<JavaRuntime> {
       );
       continue;
     }
-    log.info(`Using Java ${runtime.version} from ${candidate.source} (${runtime.executable})`);
+    log.info(
+      t('Using Java {0} from {1} ({2})', runtime.version, candidate.source, runtime.executable),
+    );
     return runtime;
   }
 

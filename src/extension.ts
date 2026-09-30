@@ -40,7 +40,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Before anything else: every message below is written through the catalog, and the first ones are
   // emitted while the services are still being constructed.
   setLocale(vscode.env.language);
-  log.info(`Open DB Client activating (${currentLocale()})`);
+  log.info(t('Open DB Client activating ({0})', currentLocale()));
 
   const bridge = new JdbcBridge(context);
   bridgeForShutdown = bridge;
@@ -224,7 +224,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }),
   );
 
-  log.info('Open DB Client activated');
+  log.info(t('Open DB Client activated'));
 }
 
 export async function deactivate(): Promise<void> {
@@ -258,7 +258,7 @@ async function refreshDrivers(
         void vscode.window.showErrorMessage(error.guidance, { modal: true });
       }
     } else {
-      log.error(error, 'Registering JDBC drivers failed');
+      log.error(error, t('Registering JDBC drivers failed'));
       if (!options.quiet) {
         void vscode.window.showErrorMessage(t('Could not load JDBC drivers: {0}', describeError(error)));
       }

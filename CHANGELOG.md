@@ -3,7 +3,10 @@
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/),格式参考
 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
-## [未发布]
+## [0.4.1] - 2026-09-30
+
+一个补丁版:**0.4.0 在 PostgreSQL / openGauss 上会显示一层假的“目录”节点**,已由驱动自己的能力判定修掉;
+另外把自定义 SQL 能用的占位符集中成文档并加了防漂校验。
 
 ### 变更
 
@@ -373,6 +376,7 @@
 - 不支持 SSH 隧道
 - 健康监控不含数据库服务端指标
 
+[0.4.1]: https://github.com/livebug/open-dbclient/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/livebug/open-dbclient/compare/v0.2.0...v0.4.0
 [0.2.0]: https://github.com/livebug/open-dbclient/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/livebug/open-dbclient/compare/v0.1.0...v0.1.1

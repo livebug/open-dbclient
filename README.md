@@ -242,6 +242,65 @@ WHERE created_at >= ${V_DATE}
   比直接报错更危险
 - 想改用 `:V_DATE` 这种风格,把 pattern 改成 `:([A-Za-z_][A-Za-z0-9_]*)` 即可
 
+### 自定义 SQL 里能用的占位符
+
+同一个 `${...}` 写法,**在两个地方意思完全不同**,先分清再往下看:
+
+| 写在哪 | 谁来填 | 名字从哪来 |
+|---|---|---|
+| **编辑器里的 SQL** | 你(在 SQL 脚本变量页签里填值) | 你自己在脚本里写的名字,`${V_DATE}`、`${id}` 都行 |
+| **设置里的模板 SQL**(`metadata.queries` / `ddl.queries` / `actions`) | 插件,按下面的表 | 只能用它认识的固定名字;写错的占位符**不会被替换**,而是让你看到模板被跳过 |
+
+两张表里的名字不通用 —— `${table}` 在模板里有意义,在编辑器里只是一个叫 `table` 的脚本变量;反之 `${V_DATE}` 在模板里没人认识。
+
+#### 模式/表/列/索引/目录/表类型查询(`metadata.queries`)
+
+| 占位符 | 展开成 | 哪些 `kind` 能用 |
+|---|---|---|
+| `${catalog}` | 当前目录名(通常是连接指向的那个库) | `tables`、`schemas` |
+| `${schema}` | 当前模式名 | `tables`、`schemas`、`columns`、`indexes` |
+| `${table}` | 当前表名 | `columns`、`indexes` |
+| `${namePattern}` | 树请求的 LIKE 模式;没请求时就是 `%` | `tables` |
+| `${catalogLiteral}` | `'当前目录名'` —— **自带单引号并转义值里的引号** | 同上 |
+| `${schemaLiteral}` | `'当前模式名'` | 同上 |
+| `${tableLiteral}` | `'当前表名'` | `columns`、`indexes` |
+| `${namePatternLiteral}` | `'当前 LIKE 模式'` | `tables` |
+
+- 上面四个 `xLiteral` 是**值本身就是数据**的地方用的:写 `WHERE table_name = ${tableLiteral}`,不要写
+  `= '${table}'` —— 后者遇到一张叫 `it's` 的表就变成了另一条语句
+- `catalogs` 与 `tableTypes` 没有可用占位符:跑到它们时还没有任何可过滤的东西
+- 4 个原始形式插进去就是**裸名字**,适合 `LIKE ${namePatternLiteral}` 以外的场景(如拼进函数参数)
+
+#### 自定义动作与取 DDL 的语句(`actions` / `ddl.queries`)
+
+| 占位符 | 展开成 |
+|---|---|
+| `${table}` `${schema}` `${catalog}` | 名字本身,如 `orders`、`public` |
+| `${qualified}` | `模式.表`,没有模式时就是表名(不会出现开头的点) |
+| `${column}` | 列名;**只在你从列上触发时存在** |
+| `${remark}` | 对象自己的注释:表上是表注释,列上是列注释 |
+| `${connectionName}` | 连接在树上的显示名(不是数据库名) |
+| `${quotedTable}` `${quotedSchema}` `${quotedCatalog}` `${quotedQualified}` `${quotedColumn}` | 用数据库上报的引号字符包好的名字,如 `"public"."orders"` |
+| `${EST_ROWS}` 这类 | **元数据规则 select 出来的其它列**,名字就是你写的别名 |
+
+- **用在哪**:字符串字面量里、Hive `DESC` 后面这类位置用**不加引号**的;标识符位置用 `quoted` 那套。
+  搞反了不会报语法错 —— `pg_get_tabledef('${quotedQualified}')` 只是去找一张**名字里带引号**的表,找不到
+- `${remark}` 与 `${EST_ROWS}` 这类值来自节点本身:表注释来自元数据规则(见
+  [树里的模式/表/列/索引查询都可以自己写](#树里的模式表列索引查询都可以自己写推荐给慢库)),
+  附加字段也来自那里。所以**先配好规则,模板里才有东西可用**
+- 附加字段与上述固定名字重名时会被丢弃,规则改不掉 `${table}` 指向的表
+
+#### 填不出来会怎样
+
+一律**当作这条模板不可用**,而不是换成空串:
+
+| 情况 | 结果 |
+|---|---|
+| `metadata.queries` 的规则有占位符填不出来 | 这条规则**不执行**,记一次日志,回落到驱动元数据 |
+| `ddl.queries` 的规则有占位符填不出来 | 弹一条警告,告诉你用了哪个占位符,不执行 |
+| 动作(`actions`)有占位符填不出来 | 弹一条警告,不执行 |
+| 模板里用了附加字段,但规则没返回 | 同上 —— 一条 `LIKE '%${remark}%'` 在注释缺失时会静默匹配所有行,所以宁可拒绝 |
+
 ### 执行
 - 支持多条语句,执行前会自动剥离注释(块注释支持嵌套)
 - `INSERT`/`UPDATE`/`DELETE`/`DROP`/`TRUNCATE` 等破坏性语句默认二次确认
@@ -297,6 +356,7 @@ WHERE created_at >= ${V_DATE}
 - **名字是数据,不要自己往引号里塞**:`${tableLiteral}`、`${schemaLiteral}`、`${catalogLiteral}`、
   `${namePatternLiteral}` 自带单引号并把值里的引号转义好 —— 否则一张叫 `it's` 的表就能把你的语句
   变成另一条语句。示例里用 `= ${tableLiteral}` 而不是 `= '${table}'`
+- 能用哪些占位符、分别是什么意思:见[自定义 SQL 里能用的占位符](#自定义-sql-里能用的占位符)
 - 结果按列名读,用 JDBC 对同一批数据使用的名字,别名成这些名字即可:
   - 表列表:`TABLE_SCHEM`/`TABLE_NAME`/`TABLE_TYPE`;模式列表:`TABLE_SCHEM`
   - 目录列表(`catalogs`):`TABLE_CAT`(或 `TABLE_CATALOG` / `CATALOG_NAME`);
@@ -356,15 +416,13 @@ WHERE created_at >= ${V_DATE}
 
 **没有规则匹配时,才用内置的元数据重建**,所以默认行为不变。
 
-占位符分两种 —— 这个区分很关键:
+占位符分两种 —— 这个区分很关键,完整清单见
+[自定义 SQL 里能用的占位符](#自定义-sql-里能用的占位符):
 
 | 用途 | 写法 | 展开成 |
 |---|---|---|
 | 字符串字面量里 / Hive 的 `DESC` 后 | `${table}` `${schema}` `${catalog}` `${qualified}` `${column}` `${remark}` | 驱动上报的**原始名字**,不加引号 |
 | 需要标识符的位置 | `${quotedTable}` `${quotedSchema}` `${quotedCatalog}` `${quotedQualified}` `${quotedColumn}` | 用数据库上报的引号字符包裹 |
-
-`${remark}` 是表注释(建议在元数据规则里把它取出来),没有注释时**用到它的规则会被跳过**,而不是去掉它照跑。
-元数据规则里 select 出来的其它列同样可以直接引用,名字就是你在规则里写的别名。
 
 搞反了的后果:`pg_get_tabledef('${quotedQualified}')` 会去找一张**名字里带引号**的表,不报语法错,只是找不到。
 `${qualified}` 在没有 schema 的库上不会产生开头的点(`DESC .table` 那种)。

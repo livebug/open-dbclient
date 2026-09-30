@@ -102,7 +102,16 @@ const properties = Object.assign(
 );
 
 // Settings are documented in tables whose first cell is the key without the `open-dbclient.` prefix.
-const documentedSettings = [...new Set([...readme.matchAll(/^\| `([^`]+)`\s+\|/gm)].map((m) => m[1]))];
+// A cell that names a template placeholder - `${table}`, `${namePatternLiteral}` - is never a setting, and
+// saying so here is the difference between a helpful check and one that makes people rewrite their tables
+// to get past it.
+const documentedSettings = [
+  ...new Set(
+    [...readme.matchAll(/^\| `([^`]+)`\s+\|/gm)]
+      .map((m) => m[1])
+      .filter((key) => !key.includes('$')),
+  ),
+];
 const unknownSettings = documentedSettings.filter((key) => !(`open-dbclient.${key}` in properties));
 if (unknownSettings.length > 0) {
   fail(`README documents settings that are not contributed: ${unknownSettings.join(', ')}`);
@@ -159,6 +168,26 @@ if (existsSync(join(root, 'CHANGELOG.md'))) {
     check(`CHANGELOG has a section for ${pkg.version}`);
   } else {
     fail(`CHANGELOG has no section for the current version ${pkg.version}`);
+  }
+}
+
+// --- template placeholders ---------------------------------------------------
+
+// Every placeholder a template may use has to be in the README, because the README is where somebody looks
+// to find out what they may write. The lists live in the code, so this is the one thing that keeps a new
+// placeholder from being usable and undocumented - which is how a feature nobody can find gets shipped.
+const { ACTION_PLACEHOLDERS } = await import('../src/sql/actionTemplate.ts');
+const { METADATA_QUERY_PLACEHOLDERS } = await import('../src/sql/metadataQueries.ts');
+
+for (const [where, placeholders] of [
+  ['actions and ddl.queries', ACTION_PLACEHOLDERS],
+  ['metadata.queries', METADATA_QUERY_PLACEHOLDERS],
+]) {
+  const missing = placeholders.filter((placeholder) => !readme.includes(placeholder));
+  if (missing.length > 0) {
+    fail(`README does not document the ${where} placeholder(s): ${missing.join(', ')}`);
+  } else {
+    check(`${placeholders.length} ${where} placeholder(s) are documented`);
   }
 }
 

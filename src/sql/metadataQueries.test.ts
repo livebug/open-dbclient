@@ -12,6 +12,7 @@ import {
   matchMetadataQuery,
   metadataQueryExamples,
   METADATA_QUERY_KINDS,
+  METADATA_QUERY_PLACEHOLDERS,
   otherColumns,
   parseMetadataQueries,
   TABLE_REMARK_COLUMNS,
@@ -234,6 +235,24 @@ test('every alias a per-table example uses is one the reader looks for', () => {
       );
     }
   }
+});
+
+test('every documented placeholder can actually be filled', () => {
+  // The list is what the README and the settings text are checked against, so a name in it that the expander
+  // does not know would be documentation of a placeholder that refuses every rule using it.
+  const values = { catalog: 'db', schema: 'public', table: 'orders', namePattern: 'ord%' };
+  const { sql, missing } = expandMetadataSql(METADATA_QUERY_PLACEHOLDERS.join(' '), values);
+
+  assert.deepEqual(missing, [], 'a listed placeholder nothing can fill');
+  assert.equal(sql, "db public orders ord% 'db' 'public' 'orders' 'ord%'");
+});
+
+test('a quoted name cannot end the statement it is put into', () => {
+  // The two spellings side by side: the raw one is the name as reported, the literal one is safe to drop into
+  // a statement whose author does not want to think about quotes.
+  const { sql } = expandMetadataSql('${table} ${tableLiteral}', { table: "o'brien" });
+
+  assert.equal(sql, "o'brien 'o''brien'");
 });
 
 test('the shipped examples are rules that parse, match and use known placeholders', () => {

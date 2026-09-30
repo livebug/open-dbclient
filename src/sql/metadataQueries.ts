@@ -129,6 +129,31 @@ export interface MetadataQueryValues {
   readonly namePattern?: string;
 }
 
+/**
+ * Every placeholder a metadata rule may use, and nothing else.
+ *
+ * The raw forms are the names as the driver reported them, to be put inside the string literals the rule is
+ * already writing. The literal forms carry their own single quotes and escape a quote inside the value, so a
+ * name containing one cannot end the statement it was dropped into.
+ *
+ * Which of them a given rule can use depends on the read: a `tables` rule has no table to name, and
+ * `catalogs`/`tableTypes` have nothing to filter by at all. A rule that reaches for a placeholder the read
+ * cannot fill is not run - see `expandMetadataSql`.
+ *
+ * Exported because the README lists these and `check-docs.mjs` holds the two together: a placeholder added
+ * here and not documented is exactly the kind of gap nobody notices until they need it.
+ */
+export const METADATA_QUERY_PLACEHOLDERS = [
+  '${catalog}',
+  '${schema}',
+  '${table}',
+  '${namePattern}',
+  '${catalogLiteral}',
+  '${schemaLiteral}',
+  '${tableLiteral}',
+  '${namePatternLiteral}',
+] as const;
+
 const PLACEHOLDER = /\$\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}/g;
 
 /** Reads metadata query rules out of the setting value, dropping entries that cannot work. */

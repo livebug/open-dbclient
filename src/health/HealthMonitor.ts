@@ -108,18 +108,31 @@ export class HealthMonitor implements vscode.Disposable {
     });
   }
 
-  /** Opens a report in an editor, fetching a fresh snapshot when the push has not delivered one yet. */
+  /**
+   * Opens a report in an editor.
+   *
+   * The full snapshot is fetched every time rather than reusing the pushed one. The push is the small
+   * payload, deliberately without the recent statements and the metadata timings - and those two sections
+   * are exactly what a report is opened for when something was slow. Reusing the pushed sample produced a
+   * report that answered every question except the one it was opened to answer. The pushed sample is still
+   * the fallback, because a report of the wrong size beats no report.
+   */
   async showReport(): Promise<void> {
-    let snapshot = this.latest;
+    let snapshot: HealthSnapshot | undefined;
+    let failure: unknown;
+    try {
+      snapshot = await this.bridge.request<HealthSnapshot>(Methods.healthSnapshot);
+    } catch (error) {
+      snapshot = this.latest;
+      failure = error;
+      log.debug(`Could not read a full health snapshot: ${describeError(error)}`);
+    }
+
     if (!snapshot) {
-      try {
-        snapshot = await this.bridge.request<HealthSnapshot>(Methods.healthSnapshot);
-      } catch (error) {
-        void vscode.window.showErrorMessage(
-          t('Could not read bridge health: {0}', describeError(error)),
-        );
-        return;
-      }
+      void vscode.window.showErrorMessage(
+        t('Could not read bridge health: {0}', describeError(failure)),
+      );
+      return;
     }
 
     await this.virtualDocuments.show(
@@ -152,7 +165,8 @@ export class HealthMonitor implements vscode.Disposable {
 
   private updateStatusBar(): void {
     const show = vscode.workspace.getConfiguration().get<boolean>(Config.healthShowStatusBar, true);
-    if (!show || !this.latest) {      this.statusBar.hide();
+    if (!show || !this.latest) {
+      this.statusBar.hide();
       return;
     }
 

@@ -327,6 +327,10 @@ async function runSingleStatement(
         maxRows: vscode.workspace.getConfiguration().get<number>(Config.maxRows, 100_000),
         pageSize: vscode.workspace.getConfiguration().get<number>(Config.fetchSize, 200),
         fetchSize: vscode.workspace.getConfiguration().get<number>(Config.fetchSize, 200),
+        // A column's comment is a metadata round trip per table in the result, and on the slow drivers this
+        // project is aimed at that call is the expensive part. The panel shows them, so it asks; the reads
+        // behind the tree do not, and neither does anything else that never displays a header.
+        columnRemarks: columnRemarks(),
       },
       // A query has no deadline: it is the user's to cancel, and imposing a timeout would abort
       // legitimate long-running work with no way to opt out.
@@ -417,7 +421,7 @@ async function runTablePreview(
   try {
     const result = await dependencies.bridge.request<QueryExecuteResult>(
       Methods.queryExecute,
-      { connectionId: profile.id, sql, queryId, maxRows: limit, pageSize: limit },
+      { connectionId: profile.id, sql, queryId, maxRows: limit, pageSize: limit, columnRemarks: columnRemarks() },
       { timeoutMs: 0 },
     );
     panel.setResult(result, sql, profileLabel(profile));
@@ -822,9 +826,18 @@ async function showDdl(
   }
 }
 
+/**
+ * Whether the bridge should read column comments for a result it is about to return.
+ *
+ * Read at call time rather than cached, like every other setting in this file: turning it off should take
+ * effect on the next query, not the next window.
+ */
+function columnRemarks(): boolean {
+  return vscode.workspace.getConfiguration().get<boolean>(Config.resultColumnRemarks, true);
+}
+
 /** The configured DDL queries, with anything unusable reported once. */
-function ddlQueryRules(): ReturnType<typeof parseDdlQueries>['queries'] {
-  const parsed = parseDdlQueries(
+function ddlQueryRules(): ReturnType<typeof parseDdlQueries>['queries'] {  const parsed = parseDdlQueries(
     vscode.workspace.getConfiguration().get<unknown>(Config.ddlQueries),
   );
   for (const problem of parsed.problems) {
@@ -891,6 +904,9 @@ async function showDdlFromQuery(
           maxRows: 0,
           pageSize: vscode.workspace.getConfiguration().get<number>(Config.fetchSize, 200),
           fetchSize: vscode.workspace.getConfiguration().get<number>(Config.fetchSize, 200),
+          // The result of `DESC` or a privilege check is a grid a user reads, so it gets the same
+          // treatment as any other result rather than being a special case to remember.
+          columnRemarks: columnRemarks(),
         },
         { timeoutMs: 0 },
       ),

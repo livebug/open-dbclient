@@ -31,14 +31,27 @@ import com.opendbclient.bridge.metadata.MetadataProvider;
  *
  * <p>One lookup is made per distinct table in the result, never per column: {@code getColumns} returns
  * every column of a table at once, so a twenty-column result over two tables costs two calls.
+ *
+ * <p>And one lookup per table per bridge lifetime where it can be helped: the answers are kept in a
+ * bounded {@link CommentCache}, because on the drivers that made this feature necessary the call is slow
+ * enough that repeating it on every re-run of the same query is the whole cost.
  */
 final class ColumnRemarks {
+
+    /** One entry per table per connection, which is what the lookup is keyed by. */
+    private static final CommentCache CACHE = new CommentCache(CommentCache.DEFAULT_LIMIT);
 
     private ColumnRemarks() {
     }
 
-    /** Returns the columns, with a comment attached wherever one could be read. */
-    static List<ResultColumn> attach(List<ResultColumn> columns, Connection connection) {
+    /**
+     * Returns the columns, with a comment attached wherever one could be read.
+     *
+     * @param scope identifies the connection the lookup belongs to - its name, as the extension knows it.
+     *              Part of the cache key rather than the connection object, so that two connections to the
+     *              same database do not share (and a re-pointed connection does not inherit) entries.
+     */
+    static List<ResultColumn> attach(List<ResultColumn> columns, Connection connection, String scope) {
         if (connection == null || !hasAttributedColumn(columns)) {
             return columns;
         }
@@ -51,11 +64,10 @@ final class ColumnRemarks {
             return columns;
         }
 
-        // Keyed by table so a wide result over a few tables costs a few calls rather than one per
-        // column. The map holds lower-cased column names, because drivers disagree about the case in
-        // which they report REMARKS against COLUMN_NAME.
-        Map<String, Map<String, String>> byTable = new HashMap<>();
+        String prefix = cachePrefix(meta, scope);
         List<ResultColumn> enriched = new ArrayList<>(columns.size());
+        int read = 0;
+        int reused = 0;
 
         for (ResultColumn column : columns) {
             String table = column.tableName();
@@ -63,17 +75,45 @@ final class ColumnRemarks {
                 enriched.add(column);
                 continue;
             }
-            String key = tableKey(column);
-            Map<String, String> comments = byTable.get(key);
+            String key = prefix + tableKey(column);
+            Map<String, String> comments = CACHE.get(key);
             if (comments == null) {
                 comments = readTable(meta, column);
-                byTable.put(key, comments);
+                CACHE.put(key, comments);
+                read++;
+            } else {
+                reused++;
             }
             String comment = comments.get(column.name().toLowerCase(Locale.ROOT));
             enriched.add(comment == null || comment.isBlank() ? column : column.withRemarks(comment));
         }
 
+        if (reused > 0) {
+            // One line rather than one per table: this answers "why was that query fast the second time",
+            // and a wide result over several tables would otherwise bury the log in it.
+            Log.debug(
+                    "Column comments: %d table(s) read, %d already known",
+                    read,
+                    reused);
+        }
+
         return enriched;
+    }
+
+    /**
+     * The part of the cache key that identifies the database being described.
+     *
+     * The URL is included because a connection profile can be edited to point somewhere else, and the
+     * comments of the previous database would otherwise still be sitting under the same name.
+     */
+    private static String cachePrefix(DatabaseMetaData meta, String scope) {
+        String url;
+        try {
+            url = meta.getURL();
+        } catch (SQLException | RuntimeException failure) {
+            url = "";
+        }
+        return (scope == null ? "" : scope) + '|' + (url == null ? "" : url) + '|';
     }
 
     private static boolean hasAttributedColumn(List<ResultColumn> columns) {

@@ -3,6 +3,7 @@ package com.opendbclient.bridge;
 import com.opendbclient.bridge.export.CsvExportTests;
 import com.opendbclient.bridge.json.JsonTests;
 import com.opendbclient.bridge.metadata.DdlOptionsTests;
+import com.opendbclient.bridge.result.CommentCacheTests;
 import com.opendbclient.bridge.result.QueryRegistryTests;
 import com.opendbclient.bridge.rpc.ProtocolTests;
 
@@ -24,6 +25,8 @@ public final class BridgeTests {
         CsvExportTests.register(runner);
         System.out.println("Query registry");
         QueryRegistryTests.register(runner);
+        System.out.println("Column comment cache");
+        CommentCacheTests.register(runner);
 
         System.out.println();
         System.exit(runner.runAll());

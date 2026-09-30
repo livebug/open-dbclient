@@ -241,6 +241,9 @@ export class MetadataService {
       sql,
       // A listing has to be complete: a tree that quietly stopped at the first page would look like a
       // database with fewer tables, which is the kind of wrong an index cannot survive.
+      // Never: these rows become a tree or a completion list, neither of which shows a comment, and on a
+      // slow driver the per-table metadata call would be the largest cost of the read.
+      columnRemarks: false,
       maxRows: 0,
       pageSize,
       fetchSize: pageSize,

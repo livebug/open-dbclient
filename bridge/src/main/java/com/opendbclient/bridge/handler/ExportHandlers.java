@@ -92,10 +92,20 @@ public final class ExportHandlers {
         boolean succeeded = false;
         try (ExportTarget exporter = ExportService.create(format, target, options, tableName)) {
             if (queryId != null) {
+                // The comments, if any, were read when the query that produced this result ran - they are part
+                // of what was stored, so asking again here would describe the wrong moment in time.
                 exportedRows = exportStoredResult(services, queryId, exporter, ctx);
             } else {
                 String connectionId = Json.requireStr(params, "connectionId");
-                exportedRows = exportQuery(services, connectionId, sql, exporter, ctx);
+                // Asked for here even when the grid was told not to: the header row is where a comment earns
+                // its round trip, and 'export.useColumnRemarks' is a statement about the file being written.
+                exportedRows = exportQuery(
+                        services,
+                        connectionId,
+                        sql,
+                        exporter,
+                        ctx,
+                        Json.bool(options, "useColumnRemarks", true));
             }
             // Read before the exporter is closed, and after every row has been written: this is the
             // earliest point at which the whole file's worth of decisions has been made.
@@ -180,7 +190,8 @@ public final class ExportHandlers {
             String connectionId,
             String sql,
             ExportTarget exporter,
-            RequestContext ctx) throws SQLException, IOException {
+            RequestContext ctx,
+            boolean columnRemarks) throws SQLException, IOException {
 
         ConnectionPool pool = services.connections().require(connectionId);
         String queryId = services.queries().nextQueryId();
@@ -190,7 +201,7 @@ public final class ExportHandlers {
         try {
             Connection connection = pool.borrow(BORROW_TIMEOUT_MILLIS);
             try {
-                return runExport(connection, sql, exporter, active);
+                return runExport(connection, connectionId, sql, exporter, active, columnRemarks);
             } finally {
                 pool.release(connection);
             }
@@ -201,10 +212,11 @@ public final class ExportHandlers {
 
     private static long runExport(
             Connection connection,
+            String connectionId,
             String sql,
             ExportTarget exporter,
-            ActiveQuery active) throws SQLException, IOException {
-
+            ActiveQuery active,
+            boolean columnRemarks) throws SQLException, IOException {
         Statement statement = connection.createStatement();
         active.attach(statement);
         try {
@@ -214,7 +226,9 @@ public final class ExportHandlers {
             }
 
             try (ResultSet rows = statement.getResultSet()) {
-                List<ResultColumn> columns = ResultColumn.read(rows.getMetaData(), connection);
+                List<ResultColumn> columns = columnRemarks
+                        ? ResultColumn.read(rows.getMetaData(), connection, connectionId)
+                        : ResultColumn.read(rows.getMetaData());
                 exporter.begin(columns);
 
                 long exported = 0;

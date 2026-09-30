@@ -254,7 +254,10 @@ WHERE created_at >= ${V_DATE}
 
 - 虚拟滚动:几十万行也不卡(界面每页 200 行,按需从磁盘拉)
 - **列注释即中文名**:驱动上报了列的注释时,表头显示注释,下面一行小字仍然是物理列名与类型
-  —— 只看注释没法写 SQL,只看列名又读不懂 `AMT_01`。双击单元格可看完整值
+  —— 只看注释没法写 SQL,只看列名又读不懂 `AMT_01`。双击单元格可看完整值。
+  **注释是每个表一次 `getColumns` 调用换来的**,慢库上这就是查询慢的原因 ——
+  用 `result.columnRemarks` = `false` 关掉(结果与导出就只显示物理列名,不再发任何元数据调用),
+  查过的结果在会话内会记住,同一张表不会重复付这笔代价
 - 多次查询的结果**开在同一个区域**(第一次查询时向下分屏,之后都是该区域里的新页签),
   不会每查一次就再挤掉一条编辑器的宽度;想把结果放右边可用 `result.openIn` = `beside`
 - 单元格值:超过 64 KiB 截断显示;大于 2^53 的整数与 `BigDecimal` **转成字符串**避免精度丢失;
@@ -513,6 +516,7 @@ Markdown 报告,包含:
 | `variables.pattern` | string | `\$\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}` | 变量匹配正则,需带一个捕获组作为变量名 |
 | `query.confirmDangerous` | boolean | `true` | 破坏性语句执行前确认 |
 | `result.openIn` | string | `"below"` | 结果面板位置:`below`(上下分屏)或 `beside`(左右分屏) |
+| `result.columnRemarks` | boolean | `true` | 是否读列注释(每个表一次 `getColumns`);慢库可关,关掉后结果与导出只显示物理列名 |
 | `result.maxCacheBytes` | number | `536870912` | 磁盘结果缓存上限(512 MiB),超出按 LRU 淘汰 |
 
 ### 智能补全
@@ -636,12 +640,12 @@ npm run icon            # 重新生成扩展图标   → media/icon/icon.png
 ### 测试
 
 ```bash
-npm test        # 类型检查 + 文档/文案检查 + 54 项 Java 测试 + 153 项 TS 单测(无需数据库)
+npm test        # 类型检查 + 文档/文案检查 + 57 项 Java 测试 + 153 项 TS 单测(无需数据库)
 npm run verify  # 上面全部 + 构建桥 + 冒烟检查
 ```
 
 冒烟检查需要一个放了驱动的目录。不传目录时它会打印提示并**直接跳过**(退出码 0),
-所以别把它当成跑过了 —— 想真正跑那 118 项检查要这样:
+所以别把它当成跑过了 —— 想真正跑那 128 项检查要这样:
 
 ```bash
 mkdir -p /tmp/dbclient-drivers && cd /tmp/dbclient-drivers

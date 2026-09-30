@@ -585,6 +585,11 @@
           "default": "below",
           "markdownDescription": "%config.resultOpenIn.description%"
         },
+        "open-dbclient.result.columnRemarks": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "%config.resultColumnRemarks.description%"
+        },
         "open-dbclient.variables.pattern": {
           "type": "string",
           "default": "\\$\\{\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*\\}",

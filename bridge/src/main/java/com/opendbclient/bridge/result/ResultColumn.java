@@ -98,9 +98,16 @@ public record ResultColumn(
      * user's own vocabulary - on many schemas the physical name is an English abbreviation and the
      * comment is the label people actually use - so it is worth a metadata round trip per table, but
      * not worth failing a query over.
+     *
+     * <p>Only called when the caller actually wants comments: on the drivers this exists for, the lookup
+     * is the expensive part of running a query, so the extension decides per request rather than having
+     * every result - including the metadata reads the tree makes - pay for it.
+     *
+     * @param scope the connection the lookup belongs to, used to cache the answer per connection and table.
      */
-    public static List<ResultColumn> read(ResultSetMetaData meta, Connection connection) throws SQLException {
-        return ColumnRemarks.attach(read(meta), connection);
+    public static List<ResultColumn> read(ResultSetMetaData meta, Connection connection, String scope)
+            throws SQLException {
+        return ColumnRemarks.attach(read(meta), connection, scope);
     }
 
     /** The same column, with a comment attached. */

@@ -106,6 +106,7 @@ export const Config = {
   confirmDangerous: `${EXTENSION_ID}.query.confirmDangerous`,
   resultMaxCacheBytes: `${EXTENSION_ID}.result.maxCacheBytes`,
   resultOpenIn: `${EXTENSION_ID}.result.openIn`,
+  resultColumnRemarks: `${EXTENSION_ID}.result.columnRemarks`,
   variablePattern: `${EXTENSION_ID}.variables.pattern`,
   ddlIfNotExists: `${EXTENSION_ID}.ddl.ifNotExists`,
   ddlIndent: `${EXTENSION_ID}.ddl.indent`,

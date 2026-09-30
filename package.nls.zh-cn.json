@@ -54,6 +54,7 @@
   "config.maxRows.description": "从编辑器执行的每条语句的行数上限。命中上限会标记为「已截断」而不是静默截断。设为 `0` 表示不限。不影响导出 —— 导出按设计不设上限。",
   "config.codeLens.description": "在 SQL 文件里每条语句上方显示「Run」按钮。",
   "config.resultOpenIn.description": "结果面板打开的位置。",
+  "config.resultColumnRemarks.description": "读取结果里每个来自表的列的注释,在结果网格里把注释当作列名显示(下面一行小字仍是物理列名与类型),导出时也用它当表头。\n\n代价是结果里**每张不同的表一次 `DatabaseMetaData.getColumns` 调用**。在大量 schema 上这笔开销值得——物理名常常是缩写,注释才是人用的名字——但有些驱动把 `getColumns` 实现成了巨大的目录查询,一次要几秒钟,这也正是某些库在这里查起来慢的原因。如果你用的就是这种库,把它关掉:结果与导出会显示物理列名,并且不再发出任何元数据调用。\n\n查过的结果会在会话内记住,同一张表的第二次查询不会重复付出这笔代价。",
   "config.resultOpenIn.below": "向下拆分编辑器,结果位于 SQL 下方(上下排列)。",
   "config.resultOpenIn.beside": "向右拆分编辑器,结果位于 SQL 旁边(左右排列)。",
   "config.variablePattern.description": "在 SQL 脚本里识别参数的正则表达式,需要**一个捕获组**作为变量名。默认匹配 `${V_DATE}`。没有捕获组时整个匹配文本当作变量名。变量在语句执行前被替换;没有填值的占位符会**阻止执行**,而不是替换成空串。",

@@ -473,6 +473,30 @@ async function main() {
       check(select.result?.totalRows === 2, 'both rows were read', select.result?.totalRows);
       check(select.result?.columns?.length === 5, 'five columns described', select.result?.columns?.length);
       check(select.result?.elapsedMillis >= 0, 'execution time reported', select.result?.elapsedMillis);
+      check(
+        (select.result?.columns ?? []).every((column) => !column.remarks),
+        'no column comments are read unless they are asked for',
+        JSON.stringify((select.result?.columns ?? []).map((column) => column.remarks)),
+      );
+
+      // The other side of that flag: asking for comments means a `getColumns` call per table, and it has to
+      // leave the result exactly as it was - including on a database, like SQLite, that has no comments to
+      // give and may answer the call in its own way.
+      const commented = await bridge.call('query.execute', {
+        ...fixture,
+        sql: 'SELECT * FROM numbers ORDER BY id',
+        columnRemarks: true,
+      });
+      check(
+        commented.error === null,
+        'a query asking for column comments still succeeds',
+        commented.error?.message,
+      );
+      check(
+        commented.result?.columns?.length === 5,
+        'and describes the same columns',
+        commented.result?.columns?.length,
+      );
 
       const first = select.result?.rows?.[0] ?? [];
       const second = select.result?.rows?.[1] ?? [];

@@ -81,6 +81,9 @@ public final class QueryHandlers {
         // Zero means "no ceiling", which a user can ask for deliberately.
         int maxRows = Math.max(0, Json.intValue(params, "maxRows", DEFAULT_MAX_ROWS));
         int fetchSize = Json.intValue(params, "fetchSize", 0);
+        // Absent means no: reading a column's comment costs a metadata round trip per table, which on a slow
+        // driver is the expensive part of the query. Callers that display comments ask for them.
+        boolean columnRemarks = Json.bool(params, "columnRemarks", false);
 
         ConnectionPool pool = services.connections().require(connectionId);
 
@@ -106,7 +109,7 @@ public final class QueryHandlers {
             Execution execution;
             Connection connection = pool.borrow(BORROW_TIMEOUT_MILLIS);
             try {
-                execution = runStatement(connection, sql, active, maxRows, fetchSize);
+                execution = runStatement(connection, sql, active, maxRows, fetchSize, columnRemarks, connectionId);
             } catch (IOException failure) {
                 // A disk problem is not a database problem, and reporting it as one would send the
                 // user looking in the wrong place.
@@ -183,7 +186,9 @@ public final class QueryHandlers {
             String sql,
             ActiveQuery active,
             int maxRows,
-            int fetchSize) throws SQLException, IOException {
+            int fetchSize,
+            boolean columnRemarks,
+            String connectionId) throws SQLException, IOException {
 
         Statement statement = connection.createStatement();
         active.attach(statement);
@@ -202,7 +207,9 @@ public final class QueryHandlers {
             }
 
             try (ResultSet rows = statement.getResultSet()) {
-                List<ResultColumn> columns = ResultColumn.read(rows.getMetaData(), connection);
+                List<ResultColumn> columns = columnRemarks
+                        ? ResultColumn.read(rows.getMetaData(), connection, connectionId)
+                        : ResultColumn.read(rows.getMetaData());
                 QueryResultStore store = new QueryResultStore(active.queryId(), columns);
 
                 long count = 0;

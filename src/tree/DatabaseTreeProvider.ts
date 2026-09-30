@@ -7,6 +7,7 @@ import type { ConnectionService } from '../service/ConnectionService';
 import type { MetadataService } from '../service/MetadataService';
 import { t } from '../util/i18n';
 import { log } from '../util/logger';
+import { catalogLevel } from './catalogLevel';
 import {
   nodeCollapsibleState,
   nodeContextValue,
@@ -224,7 +225,15 @@ export class DatabaseTreeProvider
       connectionId: id,
       url: this.connections.urlOf(id),
     });
-    if (catalogs.length > 1) {
+
+    // The driver decides whether this level is usable, not the length of the list: PostgreSQL reports every
+    // database in the cluster and then ignores the catalog argument, so the level would show the connected
+    // database's tables under three different names. See `catalogLevel` for the measurements.
+    const level = catalogLevel(
+      catalogs,
+      this.connections.capabilities(id)?.supportsCatalogs ?? false,
+    );
+    if (level.show) {
       return catalogs.map((catalog) => ({
         kind: 'catalog' as const,
         connectionId: id,
@@ -232,9 +241,9 @@ export class DatabaseTreeProvider
       }));
     }
 
-    // Zero or one catalog: skip the level entirely rather than showing a single redundant node.
-    const catalog = catalogs.length === 1 ? catalogs[0] : undefined;
-    return this.childrenOfScope(id, catalog, undefined);
+    // No usable level: read the schemas straight off the connection, which is where the catalog the user
+    // connected to already lives.
+    return this.childrenOfScope(id, level.catalog, undefined);
   }
 
   /** Schemas beneath a catalog, or the table folders when there are no schemas to show. */

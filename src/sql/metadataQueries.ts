@@ -284,7 +284,10 @@ function literal(value: string | undefined): string | undefined {
  * single view.
  *
  * Nor is a `tableTypes` example: a list of type labels is a literal, and a literal is not something to
- * teach. The `catalogs` example earns its place because `TABLE_CAT` is a name nobody would guess.
+ * teach. Nor a `catalogs` one: on the PostgreSQL-compatible databases this file is written for, the tree
+ * does not show a catalog level at all - the driver reports that a catalog name means nothing to its reads,
+ * and expanding such a node would show the connected database's tables under another database's name. A
+ * `catalogs` rule is for drivers where the level does exist and its list is longer than it needs to be.
  */
 export function metadataQueryExamples(): MetadataQuery[] {
   return [
@@ -307,12 +310,6 @@ export function metadataQueryExamples(): MetadataQuery[] {
       sql: postgresColumnsSql(),
     },
     {
-      id: 'postgres-catalogs',
-      kind: 'catalogs',
-      match: 'jdbc:postgresql:*',
-      sql: postgresCatalogsSql(),
-    },
-    {
       id: 'opengauss-tables',
       kind: 'tables',
       // openGauss keeps the PostgreSQL catalogs, and its own driver's metadata calls are the ones this
@@ -331,12 +328,6 @@ export function metadataQueryExamples(): MetadataQuery[] {
       kind: 'columns',
       match: 'jdbc:opengauss:*',
       sql: postgresColumnsSql(),
-    },
-    {
-      id: 'opengauss-catalogs',
-      kind: 'catalogs',
-      match: 'jdbc:opengauss:*',
-      sql: postgresCatalogsSql(),
     },
     {
       id: 'mysql-tables',
@@ -427,18 +418,6 @@ function postgresSchemasSql(): string {
     `  FROM pg_catalog.pg_namespace\n` +
     ` WHERE nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')\n` +
     ` ORDER BY nspname`
-  );
-}
-
-/**
- * `datallowconn` because a catalog nobody can connect to is a row in a tree that fails when opened.
- */
-function postgresCatalogsSql(): string {
-  return (
-    `SELECT datname AS TABLE_CAT\n` +
-    `  FROM pg_catalog.pg_database\n` +
-    ` WHERE datallowconn\n` +
-    ` ORDER BY datname`
   );
 }
 

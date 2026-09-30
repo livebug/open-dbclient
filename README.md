@@ -301,12 +301,19 @@ WHERE created_at >= ${V_DATE}
   - 表列表:`TABLE_SCHEM`/`TABLE_NAME`/`TABLE_TYPE`;模式列表:`TABLE_SCHEM`
   - 目录列表(`catalogs`):`TABLE_CAT`(或 `TABLE_CATALOG` / `CATALOG_NAME`);
     表类型列表(`tableTypes`):`TABLE_TYPE`(或 `TYPE_NAME`)。这两个都是**连接时各读一次**的小结果,
-    列进可自定义范围是为了“万一你那个驱动在这里也不正常”,平时不必配
+    平时不必配 —— 而 `catalogs` 只在树上真会显示“目录”这一层时才有意义(见下)
   - 列(`columns`):`COLUMN_NAME`(必需)、`TYPE_NAME`、`COLUMN_SIZE`、`DECIMAL_DIGITS`、
     `IS_NULLABLE`(或 `NULLABLE` 的 0/1/2)、`COLUMN_DEF`、`REMARKS`/`COMMENT`、`ORDINAL_POSITION`、
     `IS_PRIMARY_KEY`、`IS_AUTOINCREMENT`、`IS_GENERATEDCOLUMN`(是/否怎么写都认:1、true、YES、Y)
   - 索引(`indexes`):`INDEX_NAME`(必需)、`NON_UNIQUE`(或 `IS_UNIQUE`)、`COLUMN_NAME`、
     `ORDINAL_POSITION`、`ASC_OR_DESC`、`TYPE_NAME`、`CARDINALITY`
+- **“目录(catalog)”这一层不是每个库都有**:JDBC 把库/模式/表当成三层,而很多库并不这么看。
+  MySQL/MariaDB 把数据库当作 catalog、而且驱动真的认这个参数;PostgreSQL / openGauss 则是
+  `getCatalogs()` 把**整个集群的库**都列出来,但之后**完全忽略** catalog 参数 —— 实测(pgjdbc 42.7.4):
+  连在 `postgres` 上,`getTables("otherdb")` 返回的仍是 `postgres` 库的表。所以那些节点展下去会是
+  “同一个库的表挂着别的库的名字”—— 错的内容,而不是少一个功能。现在树只会在**驱动自己说**
+  (`supportsCatalogsInDataManipulation()`,MySQL/SQL Server 为真、PostgreSQL 为假)这一层可用时
+  才显示它;否则直接从模式开始 —— 依然是能力探测,不是方言分支,也没给任何数据库开后门
 - 没提供的字段会取**诚实**的默认值而不是编一个:类型没给就是 `UNKNOWN`,可空性没给就是**未知**
   (树上显示 `?`,不会自作主张说它 NOT NULL),JDBC 类型没给就是 `OTHER`,序号没给就用结果行序
 - **表注释 = 树上的中文名**:别名成 `REMARKS`、`TABLE_COMMENT`、`COMMENT` 任意一个都会被认作注释
@@ -322,7 +329,7 @@ WHERE created_at >= ${V_DATE}
   写错的 SELECT 不该让整棵树变空(注意:**内置的 DDL 生成器走的是桥内的 JDBC 读取**,不受规则影响;
   慢库请让 `ddl.queries` 命中它)
 - **DB Client: Install Metadata SQL Examples** 会把 PostgreSQL、openGauss、MySQL 的示例规则(`tables`、
-  `schemas`、`columns`、`catalogs`,MySQL 还有 `indexes`)写进用户设置(安装后一键就有默认可改),
+  `schemas`、`columns`,MySQL 还有 `indexes`)写进用户设置(安装后一键就有默认可改),
   而不是替所有人默认打开
 - `metadata.timeoutSeconds`(默认 30)控制等多久就放弃。驱动内部的目录查询**无法取消**,
   所以超时只意味着插件不再等 —— 提示里会直接告诉你用上面这条设置换一条更快的 SQL

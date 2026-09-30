@@ -3,6 +3,20 @@
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/),格式参考
 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [未发布]
+
+### 修复
+
+- **PostgreSQL/openGauss 上“目录(catalog)”这一层展开出来是错的**。树原来只要 `getCatalogs()` 返回
+  多于一个名字就显示这一层,而 pgjdbc 会列出**整个集群的数据库**(含 `template1` 这种连不上的),
+  之后又**完全忽略** catalog 参数:实测(pgjdbc 42.7.4,连在 `postgres` 上)`getTables("otherdb")`
+  返回的仍然是 `postgres` 库的表 —— 于是同一个库的表会挂着别的库的名字出现在树下,是**错的内容**
+  而不是少一个功能。现在改由驱动自己回答:只有 `supportsCatalogsInDataManipulation()` 为真
+  (MySQL/MariaDB/SQL Server)时才显示这一层,否则直接从模式开始。仍然是能力探测,不是方言分支;
+  判定逻辑在 `src/tree/catalogLevel.ts`,连注释里都记着实测数据
+- 随之删掉了随包的 `postgres-catalogs` / `opengauss-catalogs` 示例 —— 那两个库上这一层本来就不显示了,
+  留着只会教错方向
+
 ## [0.4.0] - 2026-09-30
 
 这一版的主题是**把元数据读取交给用户写的 SQL,并且让你看得见它在做什么**。前几轮反馈里最重要的一条

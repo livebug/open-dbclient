@@ -148,12 +148,18 @@ export class MetadataCache {
     if (!this.connections.isConnected(connectionId)) {
       return;
     }
+    const scope = {
+      connectionId,
+      catalog: this.catalogFor(connectionId),
+      connectionName: this.connections.displayNameOf(connectionId),
+      url: this.connections.urlOf(connectionId),
+    };
     try {
       const [schemas, allTables] = await Promise.all([
-        this.metadata.schemas({ connectionId, url: this.connections.urlOf(connectionId) }).catch(() => [] as string[]),
+        this.metadata.schemas(scope).catch(() => [] as string[]),
         // No type filter: the completion list should include views, and every driver labels them
         // differently, so filtering would silently hide objects on some databases.
-        this.metadata.tables({ connectionId, url: this.connections.urlOf(connectionId) }),
+        this.metadata.tables(scope),
       ]);
 
       const names = allTables.map((table) => table.name);
@@ -174,6 +180,7 @@ export class MetadataCache {
     try {
       const columns: ColumnInfo[] = await this.metadata.columns({
         connectionId,
+        catalog: this.catalogFor(connectionId),
         table,
         connectionName: this.connections.displayNameOf(connectionId),
         url: this.connections.urlOf(connectionId),
@@ -190,6 +197,23 @@ export class MetadataCache {
       log.debug(`Could not load columns of '${table}': ${String(error)}`);
       return [];
     }
+  }
+
+  /**
+   * The catalog these reads are scoped to, or undefined to read across all of them.
+   *
+   * The same decision the tree makes for the same connection. A driver that cannot read inside catalogs -
+   * PostgreSQL, openGauss - gets no catalog level in the tree, and the connection's own catalog is carried
+   * down instead, because it is the only one its reads can reach. Passing it here matters for more than
+   * symmetry: a `metadata.queries` rule that filters on `${catalog}` is refused when the read names no
+   * catalog, so the completion list would quietly fall back to the driver's metadata - the slow path the rule
+   * exists to avoid. Where the driver *can* read inside catalogs the tree offers a level to pick from, and a
+   * completion list has no level, so it keeps reading across all of them rather than narrowing to one.
+   */
+  private catalogFor(connectionId: string): string | undefined {
+    return this.connections.capabilities(connectionId)?.supportsCatalogs === true
+      ? undefined
+      : this.connections.catalogOf(connectionId);
   }
 
   /** Stores columns, evicting the least recently used entries beyond the limit. */

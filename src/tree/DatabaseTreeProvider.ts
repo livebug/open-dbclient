@@ -3,6 +3,7 @@ import * as vscode from 'vscode';
 import { Commands } from '../constants';
 import type { ConnectionProfile } from '../model/ConnectionProfile';
 import type { ConnectionStore } from '../model/ConnectionStore';
+import type { DescribedTable } from '../model/tableDetails';
 import type { ConnectionService } from '../service/ConnectionService';
 import type { MetadataService } from '../service/MetadataService';
 import { t } from '../util/i18n';
@@ -40,6 +41,17 @@ export class DatabaseTreeProvider
 {
   private readonly emitter = new vscode.EventEmitter<DatabaseTreeNode | undefined>();
   private readonly cache = new Map<string, DatabaseTreeNode[]>();
+
+  /**
+   * Table listings, keyed by connection, catalog and schema - deliberately without the folder.
+   *
+   * The tables folder and the views folder are two views of one listing: the same `getTables` call, the same
+   * rows, split differently. Expanding each asked the database for the same thing twice, and on the drivers
+   * this project is aimed at that call is the most expensive read in the tree. The name filter is applied per
+   * node after the listing is read, so sharing it also means changing the filter no longer re-reads it.
+   */
+  private readonly listings = new Map<string, DescribedTable[]>();
+
   private readonly subscriptions: vscode.Disposable[] = [];
 
   /**
@@ -298,13 +310,7 @@ export class DatabaseTreeProvider
    * vocabulary the extension does not know.
    */
   private async childrenOfTableFolder(node: FolderNode): Promise<DatabaseTreeNode[]> {
-    const tables = await this.metadata.tables({
-      connectionId: node.connectionId,
-      catalog: node.catalog,
-      schema: node.schema,
-      connectionName: this.connections.displayNameOf(node.connectionId),
-      url: this.connections.urlOf(node.connectionId),
-    });
+    const tables = await this.tableListing(node.connectionId, node.catalog, node.schema);
 
     const wantsViews = node.folder === 'views';
     return tables
@@ -325,6 +331,34 @@ export class DatabaseTreeProvider
         table,
       }))
       .sort((a, b) => a.table.name.localeCompare(b.table.name));
+  }
+
+  /**
+   * The table-like objects of one schema, read once and shared by the folders over it.
+   *
+   * No type filter is passed: which folder an object belongs in is decided from the `TABLE_TYPE` the driver
+   * reports, so anything a database considers table-like somewhere still lands somewhere.
+   */
+  private async tableListing(
+    connectionId: string,
+    catalog: string | undefined,
+    schema: string | undefined,
+  ): Promise<DescribedTable[]> {
+    const key = listingKey(connectionId, catalog, schema);
+    const cached = this.listings.get(key);
+    if (cached) {
+      return cached;
+    }
+
+    const tables = await this.metadata.tables({
+      connectionId,
+      catalog,
+      schema,
+      connectionName: this.connections.displayNameOf(connectionId),
+      url: this.connections.urlOf(connectionId),
+    });
+    this.listings.set(key, tables);
+    return tables;
   }
 
   /**
@@ -405,6 +439,7 @@ export class DatabaseTreeProvider
   /** Clears the whole cache and repaints. */
   refresh(): void {
     this.cache.clear();
+    this.listings.clear();
     this.emitter.fire(undefined);
   }
 
@@ -420,6 +455,11 @@ export class DatabaseTreeProvider
         this.cache.delete(key);
       }
     }
+    for (const key of [...this.listings.keys()]) {
+      if (key.startsWith(`${connectionId}|`)) {
+        this.listings.delete(key);
+      }
+    }
   }
 
   private invalidateSubtree(node: DatabaseTreeNode): void {
@@ -431,6 +471,13 @@ export class DatabaseTreeProvider
         this.cache.delete(candidate);
       }
     }
+
+    // The listing this node was built from goes too. Without that, refreshing one schema's tables would
+    // answer from the listing read before the refresh and look like the refresh did nothing.
+    const listing = listingKeyOf(node);
+    if (listing !== undefined) {
+      this.listings.delete(listing);
+    }
   }
 
   /** Drops every cached table listing, for use after DDL that may have changed the schema. */
@@ -438,6 +485,11 @@ export class DatabaseTreeProvider
     for (const key of [...this.cache.keys()]) {
       if (key.startsWith('folder|') && (!connectionId || key.includes(`|${connectionId}|`))) {
         this.cache.delete(key);
+      }
+    }
+    for (const key of [...this.listings.keys()]) {
+      if (!connectionId || key.startsWith(`${connectionId}|`)) {
+        this.listings.delete(key);
       }
     }
   }
@@ -459,4 +511,34 @@ export class DatabaseTreeProvider
  */
 export function isView(tableType: string): boolean {
   return /view/i.test(tableType);
+}
+
+/**
+ * Which listing a set of tables belongs to: one connection, one catalog, one schema.
+ *
+ * The folder is deliberately not part of it - that is the whole point of the key.
+ */
+function listingKey(
+  connectionId: string,
+  catalog: string | undefined,
+  schema: string | undefined,
+): string {
+  return `${connectionId}|${catalog ?? ''}|${schema ?? ''}`;
+}
+
+/** The listing a node was read from, or undefined for a node that was not read from one. */
+function listingKeyOf(node: DatabaseTreeNode): string | undefined {
+  switch (node.kind) {
+    case 'catalog':
+      // A catalog whose schemas were not worth a level holds its tables directly, so it is the same listing
+      // as the one below a schema-less folder.
+      return listingKey(node.connectionId, node.catalog, undefined);
+    case 'schema':
+    case 'folder':
+    case 'table':
+    case 'view':
+      return listingKey(node.connectionId, node.catalog, node.schema);
+    default:
+      return undefined;
+  }
 }

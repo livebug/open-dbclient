@@ -717,6 +717,7 @@ async function showColumns(
       catalog: table.catalog,
       schema: table.schema,
       table: table.table.name,
+      url: dependencies.connections.urlOf(table.connectionId),
     });
 
     const path = qualifiedName(table.catalog, table.schema, table.table.name);
@@ -763,6 +764,7 @@ async function showIndexes(
       catalog: table.catalog,
       schema: table.schema,
       table: table.table.name,
+      url: dependencies.connections.urlOf(table.connectionId),
     });
 
     const grouped = new Map<string, typeof indexes>();

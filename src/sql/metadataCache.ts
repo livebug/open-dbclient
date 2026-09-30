@@ -172,7 +172,11 @@ export class MetadataCache {
 
   private async loadColumns(connectionId: string, table: string): Promise<readonly CachedColumn[]> {
     try {
-      const columns: ColumnInfo[] = await this.metadata.columns({ connectionId, table });
+      const columns: ColumnInfo[] = await this.metadata.columns({
+        connectionId,
+        table,
+        url: this.connections.urlOf(connectionId),
+      });
       return columns.map((column) => ({
         name: column.name,
         displayType: column.displayType,

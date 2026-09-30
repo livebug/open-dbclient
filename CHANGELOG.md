@@ -17,6 +17,21 @@
   不用等插件认识那个库
 - 示例规则新增 MySQL 一档,PostgreSQL/openGauss 的例子改用 `pg_catalog` —— 比 `information_schema`
   快得多,而且**只有它能取到表注释**,也就是中文 schema 上人真正认得的那个名字
+- **`metadata.queries` 现在也能替掉列与索引的读取**(`kind: "columns"` / `"indexes"`)。之前只有
+  `schemas`/`tables` 能自定义,而真正让树变慢的恰恰是**每张表一次**的 `getColumns`:展开一张表、
+  补全缓存填充、Show Columns 各算一次。列规则能表达树会显示的每一件事(`COLUMN_NAME`、`TYPE_NAME`、
+  `COLUMN_SIZE`/`DECIMAL_DIGITS`、`IS_NULLABLE`、`COLUMN_DEF`、`REMARKS`、`ORDINAL_POSITION`、
+  `IS_PRIMARY_KEY`、`IS_AUTOINCREMENT`、`IS_GENERATEDCOLUMN`),索引规则是 `INDEX_NAME`、
+  `NON_UNIQUE`、`COLUMN_NAME`、`ORDINAL_POSITION`、`ASC_OR_DESC`、`TYPE_NAME`、`CARDINALITY`;
+  没给的字段取**诚实**默认(类型 → `UNKNOWN`、可空性 → 未知(显示 `?`)、JDBC 类型 → `OTHER`、
+  序号 → 结果行序),而不是编一个
+- **字面量占位符** `${tableLiteral}` / `${schemaLiteral}` / `${catalogLiteral}` /
+  `${namePatternLiteral}`:自带单引号并转义值里的引号。这些值是**数据**,自己往引号里塞的名字
+  遇到一张叫 `it's` 的表就变成了另一条语句。示例里全部改成 `= ${tableLiteral}`
+- 新增 `columns` 示例(PostgreSQL/openGauss 走 `pg_attribute` + `format_type` + `col_description`,
+  MySQL 走 `information_schema.columns`)与 MySQL 的 `indexes` 示例。**PG 的索引例子故意不给**:
+  列出索引的列需要 `unnest ... WITH ORDINALITY` 或 `LATERAL`,而这正是那些较老的
+  PostgreSQL 兼容库(本功能最想服务的对象)没有的语法,当示例发出去就会在它们上面报错
 
 ### 变更
 
@@ -25,6 +40,9 @@
   模板**,而不是当成空串:按中文名查对象的语句少了这个名字,查出来的就是别的东西。附加字段里与
   占位符重名的(`table`、`schema` 这种)会被丢掉,否则一条奇怪的规则就能改掉所有模板指向的表
 - 这些值都从节点上直接取,不再为了拿一个界面上已经显示出来的注释而多跑一次查询
+- **每条元数据规则跑的到底是哪条 SQL,现在看得出来**:命中规则时输出通道写一行(规则名 + 占位符已
+  填好的语句),没命中而回落驱动时写一行 `debug`。规则是用户写的 SQL、却是插件选中的,而设置里那条
+  语句并不是发给数据库的那条(占位符被填过) —— 所以它和别的语句一样要能被查出来
 - 导出时因 `export.csv.quoting` = `never` 而留下的「有字段没加引号」提示,除了弹窗还写进
   **DB Client 输出通道** —— 弹窗几秒就消失,而这件事关系到已经落盘的文件,日志里还带着完整路径
 - **列注释的读取不再每次都付费**。注释是结果里**每张表一次 `getColumns`** 换来的,而这正是几个慢库
@@ -50,6 +68,14 @@
   那笔慢调用)、超出上限时丢的是**最久没用过**的那条、没读过的表不能假装知道
 - `MetadataMetricsTests`:5 项针对元数据计时的测试 —— 按调用名汇总、按**总耗时**而不是次数排序
   (一百次 1 毫秒的调用不该盖过一次 5 秒的)、失败与成功分开计、只记住最慢的 20 次且汇总不受上限影响
+- **示例规则真的在真库上跑过了**:PostgreSQL 16 与 MariaDB 11 各起一个容器,建一张带注释、主键、
+  serial/auto_increment 与索引的表,把每个示例按占位符展开后丢进去。两个库里 `columns` 示例都带回了
+  主键与注释、`IS_AUTOINCREMENT` 也都对(`nextval` / `extra LIKE '%auto_increment%'`),`indexes` 示例
+  把 `NON_UNIQUE` 的 0/1 与 `index_type` 都带了回来 —— 这些是单元测试没法证明的部分
+- 新增一项测试把示例与读取端钉在一起:**列/索引示例里每个 `AS 别名` 都必须是读取端真正会读的名字**
+  (直接拿 `COLUMN_ROW_COLUMNS` / `INDEX_ROW_COLUMNS` 对照)。服务器能告诉你语句跑得通,但告诉不了你
+  插件读不读这个别名 —— 一个写成 `IS_PK` 的规则会安静地少一个主键图标。表规则不参与这项检查:
+  那里的额外列是特性(`EST_ROWS` 会被保留并显示)
 
 ## [0.3.0] - 2026-09-29
 

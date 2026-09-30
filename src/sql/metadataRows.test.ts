@@ -3,6 +3,8 @@ import { test } from 'node:test';
 
 import type { CellValue } from '../bridge/protocol.ts';
 import {
+  columnFromRow,
+  indexFromRow,
   rowText,
   schemaNameFromRow,
   tableFromRow,
@@ -141,4 +143,149 @@ test('a cell that is not text is read as its text form', () => {
   assert.equal(rowText(row, 'X'), '12');
   assert.equal(rowText(row, 'Y'), 'true');
   assert.equal(rowText(row, 'Z'), undefined);
+});
+
+// ---------------------------------------------------------------------------
+// Columns and indexes
+// ---------------------------------------------------------------------------
+
+/** Reads one row of a `columns` rule the way the service does. */
+function readColumn(columns: readonly string[], values: readonly CellValue[], position = 1) {
+  const [row] = toMetadataRows(
+    columns.map((column) => column.toUpperCase()),
+    [values],
+  );
+  return columnFromRow(row, position);
+}
+
+/** Reads one row of an `indexes` rule the way the service does. */
+function readIndex(columns: readonly string[], values: readonly CellValue[], position = 1) {
+  const [row] = toMetadataRows(
+    columns.map((column) => column.toUpperCase()),
+    [values],
+  );
+  return indexFromRow(row, position);
+}
+
+test('a column needs a name and nothing else', () => {
+  const column = readColumn(['COLUMN_NAME'], ['AMT_01']);
+
+  assert.equal(column?.name, 'AMT_01');
+  assert.equal(column?.typeName, 'UNKNOWN', 'a type nobody gave is said to be unknown, not invented');
+  assert.equal(column?.displayType, 'UNKNOWN');
+  assert.equal(column?.primaryKey, false);
+  assert.equal(column?.ordinal, 1, 'the row position is the ordinal');
+  assert.equal(
+    column?.nullableKnown,
+    false,
+    'not knowing is different from knowing it is not null - the tree shows a ? and nothing else',
+  );
+  assert.equal(readColumn(['COLUMN_NAME'], [null]), undefined, 'a row without a name is dropped');
+});
+
+test('every column field a rule may supply is read', () => {
+  const column = readColumn(
+    [
+      'COLUMN_NAME',
+      'TYPE_NAME',
+      'COLUMN_SIZE',
+      'DECIMAL_DIGITS',
+      'IS_NULLABLE',
+      'COLUMN_DEF',
+      'REMARKS',
+      'ORDINAL_POSITION',
+      'IS_PRIMARY_KEY',
+      'IS_AUTOINCREMENT',
+      'IS_GENERATEDCOLUMN',
+    ],
+    ['id', 'NUMERIC', 20, 4, 'NO', 'nextval(1)', '主键', 3, true, true, false],
+  );
+
+  assert.equal(column?.displayType, 'NUMERIC(20,4)');
+  assert.equal(column?.size, 20);
+  assert.equal(column?.decimalDigits, 4);
+  assert.equal(column?.nullable, false);
+  assert.equal(column?.nullableKnown, true);
+  assert.equal(column?.defaultValue, 'nextval(1)');
+  assert.equal(column?.remarks, '主键');
+  assert.equal(column?.ordinal, 3);
+  assert.equal(column?.primaryKey, true);
+  assert.equal(column?.autoIncrement, true);
+  assert.equal(column?.generated, false);
+});
+
+test('a yes is a yes whichever way the catalog spells it', () => {
+  // `information_schema` says YES, JDBC's own columns say true or 1, and a hand-written rule says whatever
+  // the person who wrote it had to hand. Reading `t` as no would silently drop the key icon.
+  for (const value of [true, 1, '1', 'YES', 'yes', 'Y', 'TRUE', 't']) {
+    assert.equal(readColumn(['COLUMN_NAME', 'IS_PRIMARY_KEY'], ['id', value])?.primaryKey, true, String(value));
+  }
+  for (const value of [false, 0, '0', 'NO', 'no', 'N', 'FALSE', 'f', null, '']) {
+    assert.equal(readColumn(['COLUMN_NAME', 'IS_PRIMARY_KEY'], ['id', value])?.primaryKey, false, String(value));
+  }
+});
+
+test('nullability is read from either spelling, and unknown stays unknown', () => {
+  assert.equal(readColumn(['COLUMN_NAME', 'NULLABLE'], ['c', 0])?.nullable, false);
+  assert.equal(readColumn(['COLUMN_NAME', 'NULLABLE'], ['c', 1])?.nullable, true);
+  assert.equal(
+    readColumn(['COLUMN_NAME', 'NULLABLE'], ['c', 2])?.nullableKnown,
+    false,
+    '2 means the driver does not know',
+  );
+  assert.equal(readColumn(['COLUMN_NAME', 'IS_NULLABLE'], ['c', 'NO'])?.nullable, false);
+  assert.equal(readColumn(['COLUMN_NAME', 'IS_NULLABLE'], ['c', ''])?.nullableKnown, false);
+});
+
+test('a type is shown with its length once, not twice', () => {
+  // A database that already printed the length - `format_type`, `column_type` - keeps its own text; a rule
+  // that selected a bare name and a size gets the length added.
+  assert.equal(readColumn(['COLUMN_NAME', 'TYPE_NAME'], ['c', 'character varying(20)'])?.displayType, 'character varying(20)');
+  assert.equal(readColumn(['COLUMN_NAME', 'TYPE_NAME', 'COLUMN_SIZE'], ['c', 'varchar', 50])?.displayType, 'varchar(50)');
+  assert.equal(
+    readColumn(['COLUMN_NAME', 'TYPE_NAME', 'COLUMN_SIZE'], ['c', 'integer', 10])?.displayType,
+    'integer',
+    'a length on an integer is a width in bytes, not something a reader wants to see',
+  );
+  assert.equal(
+    readColumn(['COLUMN_NAME', 'TYPE_NAME', 'COLUMN_SIZE'], ['c', 'TEXT', 2_000_000_000])?.displayType,
+    'TEXT',
+    'that size is how some drivers say "unbounded"',
+  );
+});
+
+test('a column carries no JDBC type, and says so', () => {
+  const column = readColumn(['COLUMN_NAME', 'TYPE_NAME'], ['c', 'varchar']);
+
+  assert.equal(column?.jdbcType, 1111, 'OTHER');
+  assert.equal(column?.jdbcTypeName, 'varchar', 'the name is what gets displayed');
+});
+
+test('an index row needs a name, and takes uniqueness from whichever column it has', () => {
+  assert.equal(readIndex(['INDEX_NAME'], [null]), undefined);
+
+  const notUnique = readIndex(['INDEX_NAME', 'NON_UNIQUE'], ['idx', 1]);
+  assert.equal(notUnique?.unique, false);
+  assert.equal(readIndex(['INDEX_NAME', 'NON_UNIQUE'], ['idx', 0])?.unique, true);
+
+  // The other spelling, which a rule written against a catalog view is more likely to use.
+  assert.equal(readIndex(['INDEX_NAME', 'IS_UNIQUE'], ['idx', true])?.unique, true);
+  assert.equal(readIndex(['INDEX_NAME', 'IS_UNIQUE'], ['idx', false])?.unique, false);
+});
+
+test('the rest of an index row is read, and defaults to what the driver would have said', () => {
+  const index = readIndex(
+    ['INDEX_NAME', 'COLUMN_NAME', 'SEQ_IN_INDEX', 'ASC_OR_DESC', 'TYPE_NAME'],
+    ['idx_orders', 'created_at', 2, 'D', 'btree'],
+  );
+
+  assert.equal(index?.columnName, 'created_at');
+  assert.equal(index?.ordinal, 2);
+  assert.equal(index?.ascending, false);
+  assert.equal(index?.typeName, 'btree', 'a rule that says what kind of index it is gets to say it');
+
+  const bare = readIndex(['INDEX_NAME'], ['idx'], 4);
+  assert.equal(bare?.ordinal, 4);
+  assert.equal(bare?.type, 3);
+  assert.equal(bare?.typeName, 'other', 'the same word the bridge uses for an unclassified index');
 });

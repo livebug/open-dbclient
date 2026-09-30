@@ -321,6 +321,7 @@ export class DatabaseTreeProvider
       catalog: node.catalog,
       schema: node.schema,
       table: node.table.name,
+      url: this.connections.urlOf(node.connectionId),
     };
 
     const columns = await this.metadata.columns(reference);
@@ -366,6 +367,7 @@ export class DatabaseTreeProvider
       catalog: node.catalog,
       schema: node.schema,
       table: node.table,
+      url: this.connections.urlOf(node.connectionId),
     });
     return indexes
       .filter((index) => this.matches(index.name ?? ''))

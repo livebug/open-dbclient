@@ -271,34 +271,54 @@ WHERE created_at >= ${V_DATE}
 - **Show Indexes**: 索引名、列、是否唯一
 - **Generate DDL**: 见下
 
-#### 树里的模式/表查询也可以自己写(推荐给慢库)
+#### 树里的模式/表/列/索引查询都可以自己写(推荐给慢库)
 
-连接树的模式与表列表走的是 `DatabaseMetaData`。有些驱动把它实现成了巨大的目录查询 —— 兼容
-PostgreSQL 的库上可能要几分钟,而等价的 `information_schema` 查询毫秒级返回。设 `metadata.queries`
-可以把你自己的 SQL 放进去:
+连接树的模式、表、**列**与索引都走 `DatabaseMetaData`。有些驱动把它实现成了巨大的目录查询 ——
+兼容 PostgreSQL 的库上可能要几分钟,而等价的 `pg_catalog` / `information_schema` 查询毫秒级返回。
+设 `metadata.queries` 可以把你自己的 SQL 放进去:
 
 ```jsonc
-{ "kind": "tables", "match": "jdbc:postgresql:*",
-  "sql": "SELECT n.nspname AS TABLE_SCHEM, c.relname AS TABLE_NAME, 'TABLE' AS TABLE_TYPE,\n  pg_catalog.obj_description(c.oid, 'pg_class') AS REMARKS, c.reltuples::bigint AS EST_ROWS\n  FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace\n  WHERE n.nspname = '${schema}'" }
+[
+  { "kind": "tables",  "match": "jdbc:postgresql:*",
+    "sql": "SELECT n.nspname AS TABLE_SCHEM, c.relname AS TABLE_NAME, 'TABLE' AS TABLE_TYPE,\n  pg_catalog.obj_description(c.oid, 'pg_class') AS REMARKS, c.reltuples::bigint AS EST_ROWS\n  FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace\n  WHERE n.nspname = '${schema}'" },
+
+  // 展开一张表时走的就是这条:慢库上它才是真正的痛
+  { "kind": "columns", "match": "jdbc:postgresql:*",
+    "sql": "SELECT a.attname AS COLUMN_NAME,\n  pg_catalog.format_type(a.atttypid, a.atttypmod) AS TYPE_NAME,\n  a.attnum AS ORDINAL_POSITION, NOT a.attnotnull AS IS_NULLABLE,\n  pg_catalog.col_description(a.attrelid, a.attnum) AS REMARKS\n  FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_class c ON c.oid = a.attrelid\n  WHERE c.relname = ${tableLiteral}\n  ORDER BY a.attnum" }
+]
 ```
 
-- `kind` 是 `schemas` 或 `tables`;`match` 是对连接 URL 的 glob,第一条命中生效,没命中就回到驱动元数据
-  (所以默认行为不变)
-- 占位符 `${catalog}`、`${schema}`、`${namePattern}`;填不出来时**这条规则根本不执行** ——
-  去掉一个过滤条件换来的是错的行,不是更少的行
-- 结果按列名读,用的是 JDBC 对同一批数据使用的名字(表列表:`TABLE_SCHEM`/`TABLE_NAME`/`TABLE_TYPE`;
-  模式列表:`TABLE_SCHEM`),把你的列别名成这些名字即可
+- `kind` 是 `schemas`、`tables`、**`columns`**、**`indexes`**;`match` 是对连接 URL 的 glob,
+  第一条命中生效,没命中就回到驱动元数据(所以默认行为不变)
+- 占位符 `${catalog}`、`${schema}`、`${namePattern}`,以及 `columns`/`indexes` 规则才有的 `${table}`;
+  填不出来时**这条规则根本不执行** —— 去掉一个过滤条件换来的是错的行,不是更少的行
+- **名字是数据,不要自己往引号里塞**:`${tableLiteral}`、`${schemaLiteral}`、`${catalogLiteral}`、
+  `${namePatternLiteral}` 自带单引号并把值里的引号转义好 —— 否则一张叫 `it's` 的表就能把你的语句
+  变成另一条语句。示例里用 `= ${tableLiteral}` 而不是 `= '${table}'`
+- 结果按列名读,用 JDBC 对同一批数据使用的名字,别名成这些名字即可:
+  - 表列表:`TABLE_SCHEM`/`TABLE_NAME`/`TABLE_TYPE`;模式列表:`TABLE_SCHEM`
+  - 列(`columns`):`COLUMN_NAME`(必需)、`TYPE_NAME`、`COLUMN_SIZE`、`DECIMAL_DIGITS`、
+    `IS_NULLABLE`(或 `NULLABLE` 的 0/1/2)、`COLUMN_DEF`、`REMARKS`/`COMMENT`、`ORDINAL_POSITION`、
+    `IS_PRIMARY_KEY`、`IS_AUTOINCREMENT`、`IS_GENERATEDCOLUMN`(是/否怎么写都认:1、true、YES、Y)
+  - 索引(`indexes`):`INDEX_NAME`(必需)、`NON_UNIQUE`(或 `IS_UNIQUE`)、`COLUMN_NAME`、
+    `ORDINAL_POSITION`、`ASC_OR_DESC`、`TYPE_NAME`、`CARDINALITY`
+- 没提供的字段会取**诚实**的默认值而不是编一个:类型没给就是 `UNKNOWN`,可空性没给就是**未知**
+  (树上显示 `?`,不会自作主张说它 NOT NULL),JDBC 类型没给就是 `OTHER`,序号没给就用结果行序
 - **表注释 = 树上的中文名**:别名成 `REMARKS`、`TABLE_COMMENT`、`COMMENT` 任意一个都会被认作注释
   (都有值时按这个顺序取),显示在表名后面,筛选也匹配它,自定义 SQL 里可以用 `${remark}` 取到
   —— 中文 schema 上往往只有注释才是人能认的名字
-- **其它列一律保留**:你不是 select 了 `EST_ROWS`、`ENGINE` 这种列吗?它们不会丢,会按你 select 的顺序
-  展示在节点悬浮提示里(`EST_ROWS: 12000`),而且**可以直接当占位符用**:别名 `EST_ROWS` 对应
+- **表规则里其它列一律保留**:你不是 select 了 `EST_ROWS`、`ENGINE` 这种列吗?它们不会丢,会按你 select
+  的顺序展示在节点悬浮提示里(`EST_ROWS: 12000`),而且**可以直接当占位符用**:别名 `EST_ROWS` 对应
   `${EST_ROWS}`,自定义动作与 DDL 规则里都能写。这就是这个设置可扩展的地方:目录表里有用的东西,
-  不用等插件认识那个库就能显示出来、用起来
+  不用等插件认识那个库就能显示出来、用起来。列与索引规则不做这件事 —— 它们要填的是固定形状的模型
+- **跑了哪条 SQL 看得出来**:规则命中时输出通道会写一行(规则名 + 占位符已填好的语句);没命中而走了
+  驱动时会写一行 `debug`。想知道某类读取到底耗在哪里,看健康报告里的「元数据调用」
 - 规则执行失败、或返回的行里没有能识别的名字列,日志会提示一次,并**回落**到驱动元数据 ——
-  写错的 SELECT 不该让整棵树变空
-- **DB Client: Install Metadata SQL Examples** 会把 PostgreSQL、openGauss、MySQL 的示例规则写进用户设置
-  (安装后一键就有默认可改),而不是替所有人默认打开
+  写错的 SELECT 不该让整棵树变空(注意:**内置的 DDL 生成器走的是桥内的 JDBC 读取**,不受规则影响;
+  慢库请让 `ddl.queries` 命中它)
+- **DB Client: Install Metadata SQL Examples** 会把 PostgreSQL、openGauss、MySQL 的示例规则(`tables`、
+  `schemas`、`columns`,MySQL 还有 `indexes`)写进用户设置(安装后一键就有默认可改),
+  而不是替所有人默认打开
 - `metadata.timeoutSeconds`(默认 30)控制等多久就放弃。驱动内部的目录查询**无法取消**,
   所以超时只意味着插件不再等 —— 提示里会直接告诉你用上面这条设置换一条更快的 SQL
 
@@ -535,7 +555,7 @@ Markdown 报告,包含:
 
 | 设置 | 类型 | 默认 | 说明 |
 |---|---|---|---|
-| `metadata.queries` | array | `[]` | 自己写的模式/表查询 SQL(可带回表注释与附加字段),见[树里的模式/表查询也可以自己写](#树里的模式表查询也可以自己写推荐给慢库) |
+| `metadata.queries` | array | `[]` | 自己写的模式/表/**列**/索引查询 SQL(可带回表注释与附加字段),见[树里的模式/表/列/索引查询都可以自己写](#树里的模式表列索引查询都可以自己写推荐给慢库) |
 | `metadata.timeoutSeconds` | number | `30` | 等元数据读取多久后放弃;`0` 表示一直等 |
 
 ### 健康监控

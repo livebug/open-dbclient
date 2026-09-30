@@ -21,13 +21,16 @@ import {
   type MetadataQueryValues,
 } from '../sql/metadataQueries';
 import {
+  columnFromRow,
+  indexFromRow,
   schemaNameFromRow,
   tableFromRow,
   toMetadataRows,
   type MetadataResult,
+  type MetadataRow,
 } from '../sql/metadataRows';
 import type { DescribedTable } from '../model/tableDetails';
-import { describeError, log } from '../util/logger';
+import { describeError, log, summarizeSql } from '../util/logger';
 import { t } from '../util/i18n';
 
 /** Identifies an object in a database, for the calls that need a fully qualified name. */
@@ -57,6 +60,13 @@ export interface TableRequest extends MetadataRequest {
 
 export interface TableReference extends ObjectReference {
   readonly table: string;
+  /**
+   * The connection's JDBC URL, which is what a `columns` or `indexes` rule is matched against.
+   *
+   * Optional so that a caller without a profile to hand still works - it then gets the driver's metadata,
+   * which is the behaviour of every connection that has no rule.
+   */
+  readonly url?: string;
 }
 
 /**
@@ -128,6 +138,15 @@ export class MetadataService {
   }
 
   async columns(reference: TableReference): Promise<ColumnInfo[]> {
+    const fromRule = await this.mappedFromRule('columns', reference, 'COLUMN_NAME', columnFromRow);
+    if (fromRule) {
+      return fromRule;
+    }
+
+    // Logged at debug because a tree expansion asks for these constantly, and the answer to "why is this
+    // slow" is in the health report's timings rather than in a line per table. It is here for the other
+    // question: whether the rule the user configured is being used at all.
+    log.debug(`Reading the columns of ${subjectOf(reference)} from the driver's metadata`);
     const result = await this.request<{ columns: ColumnInfo[] }>(
       Methods.metadataColumns,
       withTable(reference),
@@ -136,6 +155,12 @@ export class MetadataService {
   }
 
   async indexes(reference: TableReference): Promise<IndexInfo[]> {
+    const fromRule = await this.mappedFromRule('indexes', reference, 'INDEX_NAME', indexFromRow);
+    if (fromRule) {
+      return fromRule;
+    }
+
+    log.debug(`Reading the indexes of ${subjectOf(reference)} from the driver's metadata`);
     const result = await this.request<{ indexes: IndexInfo[] }>(
       Methods.metadataIndexes,
       withTable(reference),
@@ -208,6 +233,7 @@ export class MetadataService {
     rule: MetadataQuery,
     connectionId: string,
     values: MetadataQueryValues,
+    subject: string,
   ): Promise<MetadataResult | undefined> {
     const expanded = expandMetadataSql(rule.sql, values);
     if (expanded.missing.length > 0) {
@@ -220,6 +246,12 @@ export class MetadataService {
       return undefined;
     }
 
+    // Logged before it runs, like every other statement this extension issues. A rule is SQL the user
+    // wrote but the extension chose and filled in, so "which statement actually ran" has to be answerable
+    // from the output channel, and the placeholders are the reason: the statement in the settings is not
+    // the statement that went to the database.
+    log.info(`Reading ${subject} with metadata query '${rule.id}': ${summarizeSql(expanded.sql)}`);
+
     try {
       return await this.runQuery(connectionId, expanded.sql);
     } catch (error) {
@@ -231,6 +263,51 @@ export class MetadataService {
       );
       return undefined;
     }
+  }
+
+  /**
+   * Reads one table's columns or indexes with a rule, when one applies.
+   *
+   * The two are the same shape of read - one statement per table, one row per object - so they share a
+   * path rather than diverging in the details: the name column they cannot do without, and what to say
+   * when a rule returns rows that lack it.
+   */
+  private async mappedFromRule<T>(
+    kind: 'columns' | 'indexes',
+    reference: TableReference,
+    nameColumn: string,
+    mapRow: (row: MetadataRow, position: number) => T | undefined,
+  ): Promise<T[] | undefined> {
+    const rule = this.ruleFor(kind, reference.url);
+    if (!rule) {
+      return undefined;
+    }
+
+    const subject = `${kind} of ${subjectOf(reference)}`;
+    const result = await this.runRule(
+      rule,
+      reference.connectionId,
+      { catalog: reference.catalog, schema: reference.schema, table: reference.table },
+      subject,
+    );
+    if (!result) {
+      return undefined;
+    }
+
+    // The row's position is passed in as the ordinal, so a rule that did not select one still produces a
+    // stable order - the order the statement returned, which the user is looking at.
+    const mapped = result.rows
+      .map((row, index) => mapRow(row, index + 1))
+      .filter((object): object is T => object !== undefined);
+
+    if (mapped.length === 0 && result.rows.length > 0) {
+      this.reportOnce(
+        `rule-columns-${rule.id}`,
+        `The metadata query '${rule.id}' returned rows but no ${nameColumn} column, so it was ignored.`,
+      );
+      return undefined;
+    }
+    return mapped;
   }
 
   /** Runs a statement to completion and reads every row it returned, keyed by column name. */
@@ -294,7 +371,14 @@ export class MetadataService {
       return undefined;
     }
 
-    const result = await this.runRule(rule, request.connectionId, { catalog: request.catalog });
+    const result = await this.runRule(
+      rule,
+      request.connectionId,
+      { catalog: request.catalog },
+      // Named the way the health report names it - `schemas of shop` - so a line in the log and a row in
+      // the report are recognisably about the same read.
+      request.catalog ? `schemas of ${request.catalog}` : 'schemas',
+    );
     if (!result) {
       return undefined;
     }
@@ -321,11 +405,16 @@ export class MetadataService {
       return undefined;
     }
 
-    const result = await this.runRule(rule, request.connectionId, {
-      catalog: request.catalog,
-      schema: request.schema,
-      namePattern: request.namePattern,
-    });
+    const result = await this.runRule(
+      rule,
+      request.connectionId,
+      {
+        catalog: request.catalog,
+        schema: request.schema,
+        namePattern: request.namePattern,
+      },
+      `tables${request.schema || request.catalog ? ` of ${request.schema || request.catalog}` : ''}`,
+    );
     if (!result) {
       return undefined;
     }
@@ -380,6 +469,13 @@ function withTable(reference: TableReference): Record<string, unknown> {
   putIfPresent(params, 'catalog', reference.catalog);
   putIfPresent(params, 'schema', reference.schema);
   return params;
+}
+
+/** How one read is named in the log and in the health report's metadata timings: `public.orders`. */
+function subjectOf(reference: { schema?: string; table?: string }): string {
+  return [reference.schema, reference.table]
+    .filter((part): part is string => part !== undefined && part !== '')
+    .join('.');
 }
 
 /**

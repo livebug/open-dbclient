@@ -11,7 +11,7 @@
 | 步骤 | 联网时 | 断网时 |
 |---|---|---|
 | `npm ci` | ✅ | ❌ **只有这一步** |
-| `npm test`(类型检查 + 文档检查 + 39 项 Java 测试 + 106 项 TS 测试) | ✅ | ✅ |
+| `npm test`(类型检查 + 文档/文案检查 + 54 项 Java 测试 + 153 项 TS 测试) | ✅ | ✅ |
 | `npm run smoke -- <驱动目录>`(125 项端到端检查) | ✅ | ✅ |
 | `npm run bridge:compile`(Java 桥构建) | ✅ | ✅ |
 | `npm run package`(打 VSIX) | ✅ | ✅ |
@@ -74,7 +74,7 @@ npm ci --offline --cache ../npm-cache
 ### 2. 验证环境
 
 ```bash
-npm test          # 类型检查 + 文档一致性 + Java 测试 + TS 测试,不需要数据库
+npm test          # 类型检查 + 文档/文案一致性 + Java 测试 + TS 测试,不需要数据库
 ```
 
 想跑端到端检查(需要驱动 jar):
@@ -114,7 +114,8 @@ npm config set registry https://nexus.内网域名/repository/npm-group/
 npm ci    # 有网时;没网就用 --offline --cache
 ```
 
-`npm run docs` 会校验 lockfile 里没有非默认源的地址,防止悄悄回退。
+`npm run docs` 会校验 lockfile 里没有非默认源的地址、README 与清单是否一致,防止悄悄回退;
+`npm run i18n` 校验界面文案都有中文译文(两个一起跑:`npm run checks`)。
 
 ---
 
@@ -196,8 +197,8 @@ build:
 | **Java 桥零外部依赖** | 用户的驱动 jar 常常是 fat jar 自带一堆库,桥再引库就会撞版本 | 新增 Java 依赖前先想清楚;真需要时用 `bridge/src/main/java` 下的自研实现 |
 | **不写方言分支** | 跨库差异靠 JDBC 能力探测(`getIdentifierQuoteString()` / `supportsXxx()`),新库天然可用 | 想加"某个库特殊处理"时,先看能否用 `DatabaseCapabilities` 表达 |
 | **写入端与解析规则必须同处** | `-- @connection` 曾经因为写 `:` 而读不带 `:`,导致指令完全失效 | `src/constants.ts` 里 `CONNECTION_DIRECTIVE` 与 `connectionDirective()` 挨着放,并有往返测试 |
-| **可选字段缺省,不要用空串** | 占位符展开成空串会得到"能跑但结果错"的 SQL | `buildActionContext` 里 `column` 就是缺省而非空串 |
-| **改了设置就要改文档** | README 里的设置名/命令名/版本号都会被自动校验 | `npm run docs` 会拦下来 |
+| **可选字段缺省,不要用空串** | 占位符展开成空串会得到"能跑但结果错"的 SQL | `buildActionContext` 里 `column`、`remark` 就是缺省而非空串 |
+| **改了设置就要改文档** | README 里的设置名/命令名/版本号都会被自动校验 | `npm run checks` 会拦下来 |
 | **版本号与 CHANGELOG 必须同步** | 发版脚本按 tag 与 `package.json` 一致性校验 | `scripts/extract-changelog.mjs` |
 
 改完代码务必跑:

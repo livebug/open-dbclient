@@ -636,7 +636,7 @@ npm run icon            # 重新生成扩展图标   → media/icon/icon.png
 ### 测试
 
 ```bash
-npm test        # 类型检查 + 文档与清单一致性 + 54 项 Java 测试 + 131 项 TS 单测(无需数据库)
+npm test        # 类型检查 + 文档/文案检查 + 54 项 Java 测试 + 153 项 TS 单测(无需数据库)
 npm run verify  # 上面全部 + 构建桥 + 冒烟检查
 ```
 
@@ -656,6 +656,12 @@ cd - && npm run smoke -- /tmp/dbclient-drivers
 `scripts/check-docs.mjs` 会校验 README 里写的设置名、命令面板标签、快捷键、视图和链接是否
 真的存在,并校验 `package.nls.json` / `package.nls.zh-cn.json` 与清单里的 `%键%` 是否一一对应
 —— 这些都是不会让构建报错、但用户一用就撞上的错误。
+
+`scripts/check-i18n.mjs` 拦另一类同样的错:界面文案以**英文原文为键**,漏译不会报错,只会让中文
+用户在一句中文里看到一句英文。它扫遍 `src/**` 与 `media/**` 里每个 `t('...')` 字面量,要求
+`src/util/messages.zh-cn.ts` 里都有对应条目;读不出来的调用(变量、拼接)必须列进脚本里的白名单,
+否则算失败 —— 白名单里连它可能产生哪几个键都要写清楚,所以它不会变成一句谁也看不懂的 `eslint-disable`。
+目录里多余的键只警告不失败(`npm run i18n` 单独跑即可,`npm test` 走 `npm run checks`)。
 
 ### 内网 / 离线开发
 

@@ -1,6 +1,5 @@
 node_modules/
 out/
-dist/
 *.vsix
 build/
 
@@ -14,8 +13,6 @@ media/connection/main.js
 media/connection/main.js.map
 media/variables/main.js
 media/variables/main.js.map
-media/health/main.js
-media/health/main.js.map
 
 # Compiled bridge artifacts
 bridge/out/

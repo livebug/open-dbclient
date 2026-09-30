@@ -206,6 +206,13 @@ export class ExportService {
       if (result.unquotedFields && result.unquotedFields > 0) {
         // The write itself was what the user asked for, so it is a warning and not an error - and it is
         // worth one, because the alternative is discovering it when the file is loaded again.
+        //
+        // Written to the channel as well, because a toast is gone in seconds and this is about a file
+        // that is already on disk. The channel line carries the full path, which the toast has no room for.
+        log.warn(
+          `CSV quoting was 'never' and ${result.unquotedFields} field(s) written to ${result.file} ` +
+            'contain the separator, a quote or a line break; the file may not read back correctly',
+        );
         void vscode.window.showWarningMessage(
           t(
             '{0} field(s) contain the separator, a quote or a line break but were written without quotes, so the file may not read back correctly.',

@@ -28,6 +28,10 @@
 - **字面量占位符** `${tableLiteral}` / `${schemaLiteral}` / `${catalogLiteral}` /
   `${namePatternLiteral}`:自带单引号并转义值里的引号。这些值是**数据**,自己往引号里塞的名字
   遇到一张叫 `it's` 的表就变成了另一条语句。示例里全部改成 `= ${tableLiteral}`
+- **`catalogs` 与 `tableTypes` 也开了**(原来只剩这两个读取不能自定义)。它们各是一次性的小结果、
+  平时不慢,所以理由是"万一你那个驱动在这里返回了没用的东西":目录列表把连不上的库也列出来、
+  表类型一个都不给。两者都**不需要占位符**(跑到它们时还不知道能按什么过滤),`tableTypes` 的
+  kind 大小写都认(存下来的是规范拼写),名字列表会去重、空白条目按"没给"处理
 - 新增 `columns` 示例(PostgreSQL/openGauss 走 `pg_attribute` + `format_type` + `col_description`,
   MySQL 走 `information_schema.columns`)与 MySQL 的 `indexes` 示例。**PG 的索引例子故意不给**:
   列出索引的列需要 `unnest ... WITH ORDINALITY` 或 `LATERAL`,而这正是那些较老的

@@ -220,7 +220,10 @@ export class DatabaseTreeProvider
     }
     const { id } = node.profile;
 
-    const catalogs = await this.metadata.catalogs(id);
+    const catalogs = await this.metadata.catalogs({
+      connectionId: id,
+      url: this.connections.urlOf(id),
+    });
     if (catalogs.length > 1) {
       return catalogs.map((catalog) => ({
         kind: 'catalog' as const,

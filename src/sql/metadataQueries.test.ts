@@ -2,7 +2,11 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { globToRegExp } from './actionTemplate.ts';
-import { COLUMN_ROW_COLUMNS, INDEX_ROW_COLUMNS } from './metadataRows.ts';
+import {
+  COLUMN_ROW_COLUMNS,
+  INDEX_ROW_COLUMNS,
+  NAME_ROW_COLUMNS,
+} from './metadataRows.ts';
 import {
   expandMetadataSql,
   matchMetadataQuery,
@@ -209,6 +213,9 @@ test('every alias a per-table example uses is one the reader looks for', () => {
   // extension reads the alias: a rule aliased `IS_PK` would run perfectly and produce a column with no key
   // icon, which is this test's job to catch.
   const known: Record<string, readonly string[]> = {
+    schemas: NAME_ROW_COLUMNS.schemas,
+    catalogs: NAME_ROW_COLUMNS.catalogs,
+    tableTypes: NAME_ROW_COLUMNS.tableTypes,
     columns: Object.values(COLUMN_ROW_COLUMNS).flat(),
     indexes: Object.values(INDEX_ROW_COLUMNS).flat(),
   };

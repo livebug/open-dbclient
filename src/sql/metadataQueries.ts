@@ -73,8 +73,20 @@ export function otherColumns(columns: readonly string[]): string[] {
  * one separately, and on a driver whose `getColumns` is a large catalog query that is the whole cost of
  * using the tree. `schemas` and `tables` are read once per expansion, and `tables` is the one that is
  * slow on a database with thousands of them.
+ *
+ * `catalogs` and `tableTypes` are here for completeness rather than because they are usually slow: both are
+ * asked once per connection and answered from a short list. They are offered because "the read I cannot
+ * replace is the one that turns out to be slow", and because a driver that answers either of them with
+ * something useless - no table types at all, a catalog list that includes databases the user cannot open -
+ * is otherwise a dead end. Neither takes a placeholder: nothing is known about what to filter by yet.
  */
-export type MetadataQueryKind = 'schemas' | 'tables' | 'columns' | 'indexes';
+export type MetadataQueryKind =
+  | 'schemas'
+  | 'tables'
+  | 'columns'
+  | 'indexes'
+  | 'catalogs'
+  | 'tableTypes';
 
 /** Every kind, for validating the setting and for the message that rejects a typo. */
 export const METADATA_QUERY_KINDS: readonly MetadataQueryKind[] = [
@@ -82,7 +94,18 @@ export const METADATA_QUERY_KINDS: readonly MetadataQueryKind[] = [
   'tables',
   'columns',
   'indexes',
+  'catalogs',
+  'tableTypes',
 ];
+
+/**
+ * The kinds by their lower-cased spelling.
+ *
+ * `tableTypes` is the one kind with a capital in it, because that is how the rest of the extension spells
+ * it - `TABLE_TYPE`, `tableTypes()` - and a setting whose value had to be typed exactly would be a trap.
+ * The canonical spelling is what the parser stores, so everything downstream compares one string.
+ */
+const KIND_BY_LOWER_CASE = new Map(METADATA_QUERY_KINDS.map((kind) => [kind.toLowerCase(), kind]));
 
 export interface MetadataQuery {
   readonly id: string;
@@ -129,8 +152,9 @@ export function parseMetadataQueries(raw: unknown): { queries: MetadataQuery[]; 
     }
     const record = entry as Record<string, unknown>;
 
-    const kind = typeof record.kind === 'string' ? record.kind.trim().toLowerCase() : '';
-    if (!METADATA_QUERY_KINDS.includes(kind as MetadataQueryKind)) {
+    const typed = typeof record.kind === 'string' ? record.kind.trim().toLowerCase() : '';
+    const kind = KIND_BY_LOWER_CASE.get(typed);
+    if (kind === undefined) {
       // Rejected rather than defaulted: a rule written for the wrong read would return rows of the wrong
       // shape, and the tree would show nonsense instead of reporting a typo.
       problems.push(
@@ -154,7 +178,7 @@ export function parseMetadataQueries(raw: unknown): { queries: MetadataQuery[]; 
 
     const match = typeof record.match === 'string' ? record.match.trim() : '';
     seen.add(id);
-    queries.push({ id, kind: kind as MetadataQueryKind, sql, match: match === '' ? undefined : match });
+    queries.push({ id, kind, sql, match: match === '' ? undefined : match });
   }
 
   return { queries, problems };
@@ -258,6 +282,9 @@ function literal(value: string | undefined): string | undefined {
  * WITH ORDINALITY` or a `LATERAL`, and those are recent enough that shipping them as the example would
  * break exactly the older PostgreSQL-compatible databases this feature is for. The MySQL one is a
  * single view.
+ *
+ * Nor is a `tableTypes` example: a list of type labels is a literal, and a literal is not something to
+ * teach. The `catalogs` example earns its place because `TABLE_CAT` is a name nobody would guess.
  */
 export function metadataQueryExamples(): MetadataQuery[] {
   return [
@@ -280,6 +307,12 @@ export function metadataQueryExamples(): MetadataQuery[] {
       sql: postgresColumnsSql(),
     },
     {
+      id: 'postgres-catalogs',
+      kind: 'catalogs',
+      match: 'jdbc:postgresql:*',
+      sql: postgresCatalogsSql(),
+    },
+    {
       id: 'opengauss-tables',
       kind: 'tables',
       // openGauss keeps the PostgreSQL catalogs, and its own driver's metadata calls are the ones this
@@ -298,6 +331,12 @@ export function metadataQueryExamples(): MetadataQuery[] {
       kind: 'columns',
       match: 'jdbc:opengauss:*',
       sql: postgresColumnsSql(),
+    },
+    {
+      id: 'opengauss-catalogs',
+      kind: 'catalogs',
+      match: 'jdbc:opengauss:*',
+      sql: postgresCatalogsSql(),
     },
     {
       id: 'mysql-tables',
@@ -388,6 +427,18 @@ function postgresSchemasSql(): string {
     `  FROM pg_catalog.pg_namespace\n` +
     ` WHERE nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')\n` +
     ` ORDER BY nspname`
+  );
+}
+
+/**
+ * `datallowconn` because a catalog nobody can connect to is a row in a tree that fails when opened.
+ */
+function postgresCatalogsSql(): string {
+  return (
+    `SELECT datname AS TABLE_CAT\n` +
+    `  FROM pg_catalog.pg_database\n` +
+    ` WHERE datallowconn\n` +
+    ` ORDER BY datname`
   );
 }
 

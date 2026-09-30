@@ -288,15 +288,20 @@ WHERE created_at >= ${V_DATE}
 ]
 ```
 
-- `kind` 是 `schemas`、`tables`、**`columns`**、**`indexes`**;`match` 是对连接 URL 的 glob,
-  第一条命中生效,没命中就回到驱动元数据(所以默认行为不变)
+- `kind` 是 `schemas`、`tables`、**`columns`**、**`indexes`**、**`catalogs`**、**`tableTypes`**;
+  `match` 是对连接 URL 的 glob,第一条命中生效,没命中就回到驱动元数据(所以默认行为不变)
 - 占位符 `${catalog}`、`${schema}`、`${namePattern}`,以及 `columns`/`indexes` 规则才有的 `${table}`;
-  填不出来时**这条规则根本不执行** —— 去掉一个过滤条件换来的是错的行,不是更少的行
+  **`catalogs` 与 `tableTypes` 没有占位符** —— 读到它们时还不知道能按什么过滤,规则里写了就会因
+  “填不出来”而根本不执行。填不出来时**这条规则根本不执行** —— 去掉一个过滤条件换来的是错的行,
+  不是更少的行
 - **名字是数据,不要自己往引号里塞**:`${tableLiteral}`、`${schemaLiteral}`、`${catalogLiteral}`、
   `${namePatternLiteral}` 自带单引号并把值里的引号转义好 —— 否则一张叫 `it's` 的表就能把你的语句
   变成另一条语句。示例里用 `= ${tableLiteral}` 而不是 `= '${table}'`
 - 结果按列名读,用 JDBC 对同一批数据使用的名字,别名成这些名字即可:
   - 表列表:`TABLE_SCHEM`/`TABLE_NAME`/`TABLE_TYPE`;模式列表:`TABLE_SCHEM`
+  - 目录列表(`catalogs`):`TABLE_CAT`(或 `TABLE_CATALOG` / `CATALOG_NAME`);
+    表类型列表(`tableTypes`):`TABLE_TYPE`(或 `TYPE_NAME`)。这两个都是**连接时各读一次**的小结果,
+    列进可自定义范围是为了“万一你那个驱动在这里也不正常”,平时不必配
   - 列(`columns`):`COLUMN_NAME`(必需)、`TYPE_NAME`、`COLUMN_SIZE`、`DECIMAL_DIGITS`、
     `IS_NULLABLE`(或 `NULLABLE` 的 0/1/2)、`COLUMN_DEF`、`REMARKS`/`COMMENT`、`ORDINAL_POSITION`、
     `IS_PRIMARY_KEY`、`IS_AUTOINCREMENT`、`IS_GENERATEDCOLUMN`(是/否怎么写都认:1、true、YES、Y)
@@ -317,7 +322,7 @@ WHERE created_at >= ${V_DATE}
   写错的 SELECT 不该让整棵树变空(注意:**内置的 DDL 生成器走的是桥内的 JDBC 读取**,不受规则影响;
   慢库请让 `ddl.queries` 命中它)
 - **DB Client: Install Metadata SQL Examples** 会把 PostgreSQL、openGauss、MySQL 的示例规则(`tables`、
-  `schemas`、`columns`,MySQL 还有 `indexes`)写进用户设置(安装后一键就有默认可改),
+  `schemas`、`columns`、`catalogs`,MySQL 还有 `indexes`)写进用户设置(安装后一键就有默认可改),
   而不是替所有人默认打开
 - `metadata.timeoutSeconds`(默认 30)控制等多久就放弃。驱动内部的目录查询**无法取消**,
   所以超时只意味着插件不再等 —— 提示里会直接告诉你用上面这条设置换一条更快的 SQL
@@ -555,7 +560,7 @@ Markdown 报告,包含:
 
 | 设置 | 类型 | 默认 | 说明 |
 |---|---|---|---|
-| `metadata.queries` | array | `[]` | 自己写的模式/表/**列**/索引查询 SQL(可带回表注释与附加字段),见[树里的模式/表/列/索引查询都可以自己写](#树里的模式表列索引查询都可以自己写推荐给慢库) |
+| `metadata.queries` | array | `[]` | 自己写的模式/表/列/索引/目录/表类型查询 SQL(可带回表注释与附加字段),见[树里的模式/表/列/索引查询都可以自己写](#树里的模式表列索引查询都可以自己写推荐给慢库) |
 | `metadata.timeoutSeconds` | number | `30` | 等元数据读取多久后放弃;`0` 表示一直等 |
 
 ### 健康监控

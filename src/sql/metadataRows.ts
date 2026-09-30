@@ -121,10 +121,44 @@ export function firstRowText(row: MetadataRow, keys: readonly string[]): string 
   return undefined;
 }
 
+/**
+ * The names the four reads that return nothing but names accept, by what the read is about.
+ *
+ * Exported for the same reason the column and index lists are: the shipped examples are checked against
+ * these, so an example that aliases its result to a name nothing reads is caught here rather than by
+ * somebody wondering why their tree is empty.
+ */
+export const NAME_ROW_COLUMNS = {
+  schemas: ['TABLE_SCHEM', 'SCHEMA_NAME'],
+  catalogs: ['TABLE_CAT', 'TABLE_CATALOG', 'CATALOG_NAME'],
+  tableTypes: ['TABLE_TYPE', 'TYPE_NAME'],
+} as const;
+
+/**
+ * The first spelling that carries a value, or undefined when the row has nothing to say.
+ *
+ * Trimmed, and a whitespace-only value counts as absent - the same rule the action definitions use for
+ * their own fields. A blank entry in a name list becomes an empty row in the tree, and an empty row is not
+ * something a user can act on or explain.
+ */
+export function nameFromRow(row: MetadataRow, keys: readonly string[]): string | undefined {
+  const name = firstRowText(row, keys)?.trim();
+  return name === undefined || name === '' ? undefined : name;
+}
+
 /** The schema a row names, under either of the two spellings JDBC uses. */
 export function schemaNameFromRow(row: MetadataRow): string | undefined {
-  const name = rowText(row, 'TABLE_SCHEM') ?? rowText(row, 'SCHEMA_NAME');
-  return name === undefined || name === '' ? undefined : name;
+  return nameFromRow(row, NAME_ROW_COLUMNS.schemas);
+}
+
+/** The catalog a row names. `CATALOG_NAME` is the `information_schema` spelling. */
+export function catalogNameFromRow(row: MetadataRow): string | undefined {
+  return nameFromRow(row, NAME_ROW_COLUMNS.catalogs);
+}
+
+/** The table type a row names, e.g. `TABLE`, `VIEW`, `MATERIALIZED VIEW`. */
+export function tableTypeFromRow(row: MetadataRow): string | undefined {
+  return nameFromRow(row, NAME_ROW_COLUMNS.tableTypes);
 }
 
 /**

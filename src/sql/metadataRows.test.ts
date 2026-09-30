@@ -3,11 +3,13 @@ import { test } from 'node:test';
 
 import type { CellValue } from '../bridge/protocol.ts';
 import {
+  catalogNameFromRow,
   columnFromRow,
   indexFromRow,
   rowText,
   schemaNameFromRow,
   tableFromRow,
+  tableTypeFromRow,
   toMetadataRows,
   type TableRowContext,
 } from './metadataRows.ts';
@@ -135,6 +137,24 @@ test('a schema row is read under either spelling', () => {
   assert.equal(schemaNameFromRow(row), 'public');
   assert.equal(schemaNameFromRow(mysql), 'sales');
   assert.equal(schemaNameFromRow(blank), undefined);
+});
+
+test('a catalog and a table type are read the same way', () => {
+  const [pg] = toMetadataRows(['CATALOG_NAME'], [['postgres']]);
+  const [jdbc] = toMetadataRows(['TABLE_CAT'], [['shop']]);
+  const [type] = toMetadataRows(['TABLE_TYPE'], [['MATERIALIZED VIEW']]);
+  const [typed] = toMetadataRows(['TYPE_NAME'], [['VIEW']]);
+
+  assert.equal(catalogNameFromRow(pg), 'postgres');
+  assert.equal(catalogNameFromRow(jdbc), 'shop');
+  assert.equal(catalogNameFromRow(toMetadataRows(['TABLE_CAT'], [[null]])[0]), undefined);
+  assert.equal(tableTypeFromRow(type), 'MATERIALIZED VIEW');
+  assert.equal(tableTypeFromRow(typed), 'VIEW');
+  assert.equal(
+    tableTypeFromRow(toMetadataRows(['TABLE_TYPE'], [['   ']])[0]),
+    undefined,
+    'a blank name would become an empty row in the tree, which a user cannot act on or explain',
+  );
 });
 
 test('a cell that is not text is read as its text form', () => {

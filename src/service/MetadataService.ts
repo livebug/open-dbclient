@@ -21,10 +21,12 @@ import {
   type MetadataQueryValues,
 } from '../sql/metadataQueries';
 import {
+  catalogNameFromRow,
   columnFromRow,
   indexFromRow,
   schemaNameFromRow,
   tableFromRow,
+  tableTypeFromRow,
   toMetadataRows,
   type MetadataResult,
   type MetadataRow,
@@ -89,9 +91,15 @@ export class MetadataService {
     return this.request<DatabaseCapabilities>(Methods.metadataCapabilities, { connectionId });
   }
 
-  async catalogs(connectionId: string): Promise<string[]> {
+  async catalogs(request: MetadataRequest): Promise<string[]> {
+    const fromRule = await this.namesFromRule('catalogs', request, {}, catalogNameFromRow, 'TABLE_CAT');
+    if (fromRule) {
+      return fromRule;
+    }
+
+    log.debug(`Reading the catalogs of ${request.connectionId} from the driver's metadata`);
     const result = await this.request<{ catalogs: string[] }>(Methods.metadataCatalogs, {
-      connectionId,
+      connectionId: request.connectionId,
     });
     return result.catalogs ?? [];
   }
@@ -110,9 +118,15 @@ export class MetadataService {
   }
 
   /** The `TABLE_TYPE` labels this driver uses, so callers can group without guessing. */
-  async tableTypes(connectionId: string): Promise<string[]> {
+  async tableTypes(request: MetadataRequest): Promise<string[]> {
+    const fromRule = await this.namesFromRule('tableTypes', request, {}, tableTypeFromRow, 'TABLE_TYPE');
+    if (fromRule) {
+      return fromRule;
+    }
+
+    log.debug(`Reading the table types of ${request.connectionId} from the driver's metadata`);
     const result = await this.request<{ tableTypes: string[] }>(Methods.metadataTableTypes, {
-      connectionId,
+      connectionId: request.connectionId,
     });
     return result.tableTypes ?? [];
   }
@@ -365,38 +379,64 @@ export class MetadataService {
     return { columns, rows };
   }
 
-  private async schemasFromRule(request: MetadataRequest): Promise<string[] | undefined> {
-    const rule = this.ruleFor('schemas', request.url);
+  /**
+   * Reads a list of names with a rule: the schemas, catalogs or table types of a connection.
+   *
+   * The three are the same shape - a statement, then a column of names - and they share a path for the same
+   * reason the two per-table reads do: the alternative is three copies of the same four decisions (which
+   * placeholder goes in, what to say when the name column is missing, whether to fall back).
+   *
+   * `values` is what the caller knows about the read; only a schema listing has anything to filter by, and
+   * a rule for the other two that reaches for a placeholder is refused rather than run with it dropped.
+   */
+  private async namesFromRule(
+    kind: 'schemas' | 'catalogs' | 'tableTypes',
+    request: MetadataRequest,
+    values: MetadataQueryValues,
+    readName: (row: MetadataRow) => string | undefined,
+    missingColumn: string,
+  ): Promise<string[] | undefined> {
+    const rule = this.ruleFor(kind, request.url);
     if (!rule) {
       return undefined;
     }
 
-    const result = await this.runRule(
-      rule,
-      request.connectionId,
-      { catalog: request.catalog },
-      // Named the way the health report names it - `schemas of shop` - so a line in the log and a row in
-      // the report are recognisably about the same read.
-      request.catalog ? `schemas of ${request.catalog}` : 'schemas',
-    );
+    // Named the way the health report names it - `schemas of shop` - so a line in the log and a row in the
+    // report are recognisably about the same read.
+    const scope = [values.catalog, values.schema, values.table]
+      .filter((part): part is string => part !== undefined && part !== '')
+      .join('.');
+    const result = await this.runRule(rule, request.connectionId, values, scope === '' ? kind : `${kind} of ${scope}`);
     if (!result) {
       return undefined;
     }
 
-    const schemas = result.rows
-      .map((row) => schemaNameFromRow(row))
+    const names = result.rows
+      .map((row) => readName(row))
       .filter((name): name is string => name !== undefined && name !== '');
 
-    if (schemas.length === 0 && result.rows.length > 0) {
+    if (names.length === 0 && result.rows.length > 0) {
       // Rows came back but no usable names: the rule is written against the wrong column names, which is
       // worth saying out loud rather than reporting as a database with no schemas.
       this.reportOnce(
         `rule-columns-${rule.id}`,
-        `The metadata query '${rule.id}' returned rows but no TABLE_SCHEM column, so it was ignored.`,
+        `The metadata query '${rule.id}' returned rows but no ${missingColumn} column, so it was ignored.`,
       );
       return undefined;
     }
-    return schemas;
+    // Deduplicated: these are lists the tree and the completion list key things by, and a rule that joins to
+    // a second table easily returns the same name twice.
+    return [...new Set(names)];
+  }
+
+  private async schemasFromRule(request: MetadataRequest): Promise<string[] | undefined> {
+    return this.namesFromRule(
+      'schemas',
+      request,
+      { catalog: request.catalog },
+      schemaNameFromRow,
+      'TABLE_SCHEM',
+    );
   }
 
   private async tablesFromRule(request: TableRequest): Promise<DescribedTable[] | undefined> {

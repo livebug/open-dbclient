@@ -49,13 +49,8 @@ export function registerQueryCommands(dependencies: CommandDependencies): vscode
     register(Commands.viewColumns, (node) => showColumns(dependencies, asNode(node))),
     register(Commands.viewIndexes, (node) => showIndexes(dependencies, asNode(node))),
     register(Commands.generateDdl, (node) => showDdl(dependencies, asNode(node))),
-    register(Commands.refreshMetadataCache, () => {
-      // Both caches describe the same schema and go stale for the same reasons, so refreshing one
-      // without the other would leave completion offering tables that no longer exist.
-      dependencies.metadataCache.invalidate();
-      dependencies.tree.refresh();
-      void vscode.window.showInformationMessage(t('Schema information refreshed.'));
-    }),
+    register(Commands.refreshAll, () => refreshSchemaCache(dependencies)),
+    register(Commands.refreshMetadataCache, () => refreshSchemaCache(dependencies)),
     register(Commands.installMetadataQueries, () => installMetadataQueries()),
     register(Commands.insertHistoryEntry, (node) => insertHistory(asHistoryNode(node))),
     register(Commands.deleteHistoryEntry, (node) =>
@@ -63,6 +58,24 @@ export function registerQueryCommands(dependencies: CommandDependencies): vscode
     ),
     register(Commands.clearHistory, () => clearHistory(dependencies)),
   ];
+}
+
+/**
+ * Drops every cached schema listing and repaints.
+ *
+ * Two commands, one behaviour: `refreshAll` is the button in the connections view's title bar and
+ * `refreshMetadataCache` is the palette command. Registered from one function because the two are one job -
+ * the manifest having offered two entry points is not a reason for them to drift apart, and a contributed
+ * command with no handler at all is a button that answers "command not found".
+ *
+ * Both caches describe the same schema and go stale for the same reasons, so refreshing one without the
+ * other would leave completion offering tables that no longer exist. Nothing here reconnects: this is for a
+ * schema that changed underneath a connection that is still fine.
+ */
+function refreshSchemaCache(dependencies: CommandDependencies): void {
+  dependencies.metadataCache.invalidate();
+  dependencies.tree.refresh();
+  void vscode.window.showInformationMessage(t('Schema information refreshed.'));
 }
 
 function asNode(value: unknown): DatabaseTreeNode | undefined {

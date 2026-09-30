@@ -26,6 +26,10 @@ export function registerConnectionCommands(dependencies: CommandDependencies): v
     register(Commands.copyName, (node) => copyName(asNode(node))),
     register(Commands.filterTree, () => filterTree(dependencies)),
     register(Commands.clearFilter, () => dependencies.tree.setFilter('')),
+    register(Commands.refreshNode, (node) => refreshNode(dependencies, asNode(node))),
+    register(Commands.openDriverFolder, () => dependencies.drivers.openFolder()),
+    register(Commands.addDriverJar, () => addDriverJar(dependencies)),
+    register(Commands.downloadDriver, () => downloadDriver(dependencies)),
   ];
 }
 
@@ -363,4 +367,43 @@ function labelOf(node: DatabaseTreeNode): string {
     default:
       return '';
   }
+}
+
+// ---------------------------------------------------------------------------
+// tree refresh and drivers
+// ---------------------------------------------------------------------------
+
+/**
+ * Refreshes the node the menu was invoked on, and everything under it.
+ *
+ * The provider owns the invalidation; what this adds is what to do with no node at all, which is the case
+ * when the command is reached some other way than from the view's context menu. With no subject, refreshing
+ * the whole tree is the only reading of "refresh" that cannot surprise anybody.
+ */
+function refreshNode(dependencies: CommandDependencies, node: DatabaseTreeNode | undefined): void {
+  if (node) {
+    dependencies.tree.refreshNode(node);
+  } else {
+    dependencies.tree.refresh();
+  }
+}
+
+/**
+ * Adds driver jars the user picks.
+ *
+ * The manager does the work - the file dialog, the copy, the reload. The two lines after it are what every
+ * other caller of `addJars` does as well: the view's empty states are driven by `hasDrivers`, and a tree
+ * that was showing "no drivers loaded" has to be told that this changed.
+ */
+async function addDriverJar(dependencies: CommandDependencies): Promise<void> {
+  await dependencies.drivers.addJars();
+  await setDriverContext(dependencies);
+  dependencies.tree.refresh();
+}
+
+/** Downloads a driver from Maven Central by coordinates. The same follow-up as adding a jar by hand. */
+async function downloadDriver(dependencies: CommandDependencies): Promise<void> {
+  await dependencies.drivers.downloadDriver();
+  await setDriverContext(dependencies);
+  dependencies.tree.refresh();
 }

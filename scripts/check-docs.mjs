@@ -10,7 +10,7 @@
  * Runs as part of `npm test`. Exits non-zero and prints every problem it found.
  */
 
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -156,6 +156,50 @@ if (undocumentedViews.length > 0) {
   fail(`views are not mentioned in the README: ${undocumentedViews.join(', ')}`);
 } else {
   check(`${pkg.contributes.views['open-dbclient'].length} views are mentioned`);
+}
+
+// --- contributed commands ----------------------------------------------------------------
+
+// A command the manifest contributes but nothing registers is a button or a palette entry that answers with
+// "command not found" - invisible in every other way, since nothing fails until somebody clicks it. That is
+// how the connections view's refresh button shipped. The manifest holds ids while the code holds
+// `Commands.<key>`, so the ids are mapped back through the constants and then looked for at a registration
+// call site.
+const commandIds = new Map(
+  [...read('src', 'constants.ts').matchAll(/^\s+(\w+):\s*`\$\{EXTENSION_ID\}\.([^`]+)`/gm)].map(
+    ([, key, id]) => [`open-dbclient.${id}`, key],
+  ),
+);
+const sourceText = readdirSync(join(root, 'src'), { recursive: true })
+  .filter((entry) => typeof entry === 'string' && entry.endsWith('.ts'))
+  .map((entry) => read('src', entry))
+  .join('\n');
+const registeredKeys = new Set();
+const registeredIds = new Set();
+for (const [, key, literal] of sourceText.matchAll(
+  /\bregister(?:Command)?\(\s*(?:Commands\.([A-Za-z0-9_]+)|'([^']+)')/g,
+)) {
+  if (key !== undefined) {
+    registeredKeys.add(key);
+  } else {
+    registeredIds.add(literal);
+  }
+}
+const unregisteredCommands = (pkg.contributes.commands ?? [])
+  .map((entry) => entry.command)
+  .filter((id) => {
+    if (registeredIds.has(id)) {
+      return false;
+    }
+    const key = commandIds.get(id);
+    return key === undefined || !registeredKeys.has(key);
+  });
+if (unregisteredCommands.length > 0) {
+  fail(
+    `contributed commands have no handler, so clicking them reports "command not found": ${unregisteredCommands.join(', ')}`,
+  );
+} else {
+  check(`${pkg.contributes.commands.length} contributed commands have a handler`);
 }
 
 // --- changelog ------------------------------------------------------------------------------------

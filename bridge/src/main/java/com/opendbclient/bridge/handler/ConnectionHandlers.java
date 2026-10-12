@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 import com.opendbclient.bridge.BridgeServices;
 import com.opendbclient.bridge.conn.ConnectionProfileSpec;
@@ -67,5 +68,26 @@ public final class ConnectionHandlers {
         server.register(Protocol.CONNECTION_LIST, (params, ctx) -> Json.obj(
                 "connections", new ArrayList<Object>(services.connections().list()),
                 "count", services.connections().openCount()));
+
+        server.register(Protocol.CONNECTION_BEGIN_TRANSACTION, (params, ctx) -> {
+            String connectionId = Json.requireStr(params, "connectionId");
+            long timeoutSeconds = Math.max(0L, Json.longValue(params, "timeoutSeconds", 0L));
+            return services.connections().beginTransaction(connectionId, TimeUnit.SECONDS.toMillis(timeoutSeconds));
+        });
+
+        server.register(Protocol.CONNECTION_COMMIT_TRANSACTION, (params, ctx) -> {
+            String connectionId = Json.requireStr(params, "connectionId");
+            return services.connections().commitTransaction(connectionId);
+        });
+
+        server.register(Protocol.CONNECTION_ROLLBACK_TRANSACTION, (params, ctx) -> {
+            String connectionId = Json.requireStr(params, "connectionId");
+            return services.connections().rollbackTransaction(connectionId);
+        });
+
+        server.register(Protocol.CONNECTION_TRANSACTION_STATUS, (params, ctx) -> {
+            String connectionId = Json.requireStr(params, "connectionId");
+            return services.connections().transactionStatus(connectionId);
+        });
     }
 }

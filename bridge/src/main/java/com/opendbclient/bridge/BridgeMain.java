@@ -4,6 +4,7 @@ import java.io.BufferedReader;
 import java.io.FileDescriptor;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
@@ -64,18 +65,37 @@ public final class BridgeMain {
                 System.getProperty("java.vendor"),
                 Runtime.getRuntime().maxMemory() / (1024 * 1024));
 
+        FileInputStream rawIn = new FileInputStream(FileDescriptor.in);
         BufferedReader protocolIn = new BufferedReader(
-                new InputStreamReader(new FileInputStream(FileDescriptor.in), StandardCharsets.UTF_8));
+                new InputStreamReader(rawIn, StandardCharsets.UTF_8));
 
-        // Flush anything buffered when the extension terminates us abruptly.
+        // The server unblocks a blocked readLine() by closing the raw stream, not the reader:
+        // closing a BufferedReader whose readLine() is parked deadlocks on the StreamDecoder lock.
+        RpcServer server = new RpcServer(protocolIn, protocolOut, () -> {
+            try {
+                rawIn.close();
+            } catch (IOException ignored) {
+                // Best-effort; the explicit process exit is the real guarantee.
+            }
+        });
+        BridgeServices services = new BridgeServices(server);
+
+        // Release JDBC resources and flush the protocol stream however the process ends, whether it
+        // was asked to shut down or terminated abruptly.
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            Log.info("shutdown hook: flushing protocol stream");
-            protocolOut.flush();
-            diagnostics.flush();
+            Log.info("shutdown hook: closing connections and flushing streams");
+            try {
+                services.close();
+            } finally {
+                try {
+                    protocolOut.flush();
+                } catch (RuntimeException ignored) {
+                    // The stream may already be gone; nothing to do.
+                }
+                diagnostics.flush();
+            }
         }, "bridge-shutdown"));
 
-        RpcServer server = new RpcServer(protocolIn, protocolOut);
-        BridgeServices services = new BridgeServices(server);
         services.registerHandlers();
 
         try {

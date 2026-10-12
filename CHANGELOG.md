@@ -3,7 +3,14 @@
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/),格式参考
 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
-## [未发布]
+## [0.5.0] - 2026-10-12
+
+### 新增
+
+- **桥新增事务 API**:`connection.beginTransaction` / `commitTransaction` / `rollbackTransaction` /
+  `transactionStatus`(事务绑定 connectionId、支持超时自动回滚、按
+  `DatabaseMetaData.supportsTransactions` 降级)。事务激活期间 `query.execute` 自动路由到被钉住的
+  连接。状态机抽在 `conn/TransactionRegistry`,含 10 个单元测试(用 Proxy 假连接驱动真实连接池)。
 
 ### 变更
 
@@ -20,6 +27,9 @@
 
 ### 修复
 
+- **`system.shutdown` 后桥进程卡死**:`unblockReader()` 调 `BufferedReader.close()` 会与阻塞在
+  `readLine()` 的线程在 `StreamDecoder` 锁上死锁(生产走 `FileInputStream` 触发,测试走 `PipedReader`
+  掩盖了它)。现在关底层原始流,并加关停钩子优雅关闭连接/驱动;桥在 ack 后约 0.4s 内退出。
 - **PostgreSQL/openGauss 上“目录(catalog)”这一层展开出来是错的**。树原来只要 `getCatalogs()` 返回
   多于一个名字就显示这一层,而 pgjdbc 会列出**整个集群的数据库**(含 `template1` 这种连不上的),
   之后又**完全忽略** catalog 参数:实测(pgjdbc 42.7.4,连在 `postgres` 上)`getTables("otherdb")`

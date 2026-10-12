@@ -3,11 +3,11 @@ package com.opendbclient.bridge.conn;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.Collection;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
@@ -19,11 +19,16 @@ import com.opendbclient.bridge.rpc.Protocol;
 import com.opendbclient.bridge.rpc.RpcException;
 
 /**
- * Owns the open connections, keyed by the identifier the extension chose.
+ * Owns the open connections, keyed by the identifier the caller chose.
  *
  * <p>Each open profile gets one {@link ConnectionPool}. With the default pool size of one that
  * is simply a long-lived connection; raising the size allows concurrent queries without
  * changing any other code.
+ *
+ * <p>Transactions are delegated to a {@link TransactionRegistry}, which owns the {@code
+ * autoCommit=false} connections pinned by {@code beginTransaction}. Keeping that state machine
+ * separate is what lets it be tested against a fake {@link Connection} without opening a real
+ * driver.
  */
 public final class ConnectionRegistry {
 
@@ -54,6 +59,7 @@ public final class ConnectionRegistry {
 
     private final DriverLoader driverLoader;
     private final Map<String, Entry> entries = new ConcurrentHashMap<>();
+    private final TransactionRegistry transactions = new TransactionRegistry();
 
     public ConnectionRegistry(DriverLoader driverLoader) {
         this.driverLoader = driverLoader;
@@ -132,6 +138,10 @@ public final class ConnectionRegistry {
 
     /** Looks up an open connection, failing with a structured error when absent. */
     public ConnectionPool require(String connectionId) {
+        return requireEntry(connectionId).pool;
+    }
+
+    private Entry requireEntry(String connectionId) {
         Entry entry = entries.get(connectionId);
         if (entry == null) {
             throw new RpcException(Protocol.ERROR_CONNECTION_NOT_FOUND,
@@ -139,7 +149,7 @@ public final class ConnectionRegistry {
                             + (entries.isEmpty() ? " (nothing is connected)" : " (open: " + entries.keySet() + ")"));
         }
         entry.lastUsedMillis = System.currentTimeMillis();
-        return entry.pool;
+        return entry;
     }
 
     /** Capabilities of an open connection. */
@@ -156,12 +166,47 @@ public final class ConnectionRegistry {
         return entries.containsKey(connectionId);
     }
 
+    // ------------------------------------------------------------------
+    // transactions
+    // ------------------------------------------------------------------
+
+    /** Starts a transaction on {@code connectionId}. See {@link TransactionRegistry#begin}. */
+    public Map<String, Object> beginTransaction(String connectionId, long timeoutMillis) throws SQLException {
+        return transactions.begin(
+                connectionId,
+                require(connectionId),
+                capabilities(connectionId).supportsTransactions(),
+                timeoutMillis);
+    }
+
+    /** Commits the active transaction on {@code connectionId}. See {@link TransactionRegistry#commit}. */
+    public Map<String, Object> commitTransaction(String connectionId) throws SQLException {
+        return transactions.commit(connectionId, require(connectionId));
+    }
+
+    /** Rolls back the active transaction on {@code connectionId}. See {@link TransactionRegistry#rollback}. */
+    public Map<String, Object> rollbackTransaction(String connectionId) {
+        return transactions.rollback(connectionId, require(connectionId));
+    }
+
+    /** Read-only view of the active transaction. See {@link TransactionRegistry#status}. */
+    public Map<String, Object> transactionStatus(String connectionId) {
+        return transactions.status(connectionId);
+    }
+
+    /** Supplies the connection a statement should run on. See {@link TransactionRegistry#acquire}. */
+    public TransactionRegistry.StatementConnection acquire(String connectionId, long borrowTimeoutMillis)
+            throws SQLException {
+        return transactions.acquire(connectionId, require(connectionId), borrowTimeoutMillis);
+    }
+
     /** Closes a connection and its pool. Returns {@code false} when it was not open. */
     public boolean close(String connectionId) {
         Entry entry = entries.remove(connectionId);
         if (entry == null) {
             return false;
         }
+        transactions.endForClose(connectionId, entry.pool);
         entry.pool.close();
         Log.info("closed connection '%s'", connectionId);
         return true;
@@ -197,7 +242,7 @@ public final class ConnectionRegistry {
         long now = System.currentTimeMillis();
         List<Map<String, Object>> result = new ArrayList<>(entries.size());
         for (Entry entry : entries.values()) {
-            result.add(Json.obj(
+            Map<String, Object> payload = Json.obj(
                     "connectionId", entry.spec.connectionId(),
                     "driverClassName", entry.spec.driverClassName(),
                     "url", entry.spec.url(),
@@ -205,7 +250,13 @@ public final class ConnectionRegistry {
                     "uptimeMillis", now - entry.createdAtMillis,
                     "idleMillis", now - entry.lastUsedMillis,
                     "capabilities", entry.capabilities.toPayload(),
-                    "pool", entry.pool.stats().toPayload()));
+                    "pool", entry.pool.stats().toPayload());
+            Map<String, Object> transaction = transactions.status(entry.spec.connectionId());
+            payload.put("transactionActive", transaction.get("active"));
+            if (Boolean.TRUE.equals(transaction.get("active"))) {
+                payload.put("transactionElapsedMillis", transaction.get("elapsedMillis"));
+            }
+            result.add(payload);
         }
         return result;
     }

@@ -11,9 +11,9 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 import com.opendbclient.bridge.BridgeServices;
+import com.opendbclient.bridge.conn.TransactionRegistry;
 import com.opendbclient.bridge.json.Json;
 import com.opendbclient.bridge.log.Log;
-import com.opendbclient.bridge.pool.ConnectionPool;
 import com.opendbclient.bridge.result.ActiveQuery;
 import com.opendbclient.bridge.result.QueryResultStore;
 import com.opendbclient.bridge.result.ResultColumn;
@@ -85,8 +85,6 @@ public final class QueryHandlers {
         // driver is the expensive part of the query. Callers that display comments ask for them.
         boolean columnRemarks = Json.bool(params, "columnRemarks", false);
 
-        ConnectionPool pool = services.connections().require(connectionId);
-
         // Prefer an identifier supplied by the caller. The extension needs the id before execution
         // starts, otherwise a query that is still running cannot be named and therefore cannot be
         // cancelled - the identifier would only arrive with the result it was needed to abort.
@@ -107,18 +105,16 @@ public final class QueryHandlers {
         long startNanos = System.nanoTime();
         try {
             Execution execution;
-            Connection connection = pool.borrow(BORROW_TIMEOUT_MILLIS);
-            try {
-                execution = runStatement(connection, sql, active, maxRows, fetchSize, columnRemarks, connectionId);
-            } catch (IOException failure) {
-                // A disk problem is not a database problem, and reporting it as one would send the
-                // user looking in the wrong place.
-                throw new RpcException(Protocol.ERROR_IO,
-                        "Could not store the query results: " + failure.getMessage(), null, 0, failure);
-            } finally {
-                // The connection is released only after every row has been read, so a slow consumer
-                // never holds a database session open.
-                pool.release(connection);
+            try (TransactionRegistry.StatementConnection connection =
+                    services.connections().acquire(connectionId, BORROW_TIMEOUT_MILLIS)) {
+                try {
+                    execution = runStatement(connection.connection(), sql, active, maxRows, fetchSize, columnRemarks, connectionId);
+                } catch (IOException failure) {
+                    // A disk problem is not a database problem, and reporting it as one would send the
+                    // user looking in the wrong place.
+                    throw new RpcException(Protocol.ERROR_IO,
+                            "Could not store the query results: " + failure.getMessage(), null, 0, failure);
+                }
             }
 
             long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos);

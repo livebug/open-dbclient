@@ -1,5 +1,6 @@
 package com.opendbclient.bridge;
 
+import com.opendbclient.bridge.conn.TransactionRegistryTests;
 import com.opendbclient.bridge.export.CsvExportTests;
 import com.opendbclient.bridge.health.MetadataMetricsTests;
 import com.opendbclient.bridge.json.JsonTests;
@@ -30,6 +31,8 @@ public final class BridgeTests {
         CommentCacheTests.register(runner);
         System.out.println("Metadata metrics");
         MetadataMetricsTests.register(runner);
+        System.out.println("Transactions");
+        TransactionRegistryTests.register(runner);
 
         System.out.println();
         System.exit(runner.runAll());

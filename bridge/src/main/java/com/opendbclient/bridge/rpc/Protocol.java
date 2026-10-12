@@ -46,6 +46,10 @@ public final class Protocol {
     public static final String CONNECTION_TEST = "connection.test";
     public static final String CONNECTION_CLOSE = "connection.close";
     public static final String CONNECTION_LIST = "connection.list";
+    public static final String CONNECTION_BEGIN_TRANSACTION = "connection.beginTransaction";
+    public static final String CONNECTION_COMMIT_TRANSACTION = "connection.commitTransaction";
+    public static final String CONNECTION_ROLLBACK_TRANSACTION = "connection.rollbackTransaction";
+    public static final String CONNECTION_TRANSACTION_STATUS = "connection.transactionStatus";
 
     // ------------------------------------------------------------------
     // metadata
@@ -109,6 +113,9 @@ public final class Protocol {
     public static final String ERROR_DRIVER_LOAD_FAILED = "DRIVER_LOAD_FAILED";
     public static final String ERROR_CONNECTION_FAILED = "CONNECTION_FAILED";
     public static final String ERROR_CONNECTION_NOT_FOUND = "CONNECTION_NOT_FOUND";
+    public static final String ERROR_TRANSACTION_ACTIVE = "TRANSACTION_ACTIVE";
+    public static final String ERROR_TRANSACTION_NOT_FOUND = "TRANSACTION_NOT_FOUND";
+    public static final String ERROR_TRANSACTION_TIMEOUT = "TRANSACTION_TIMEOUT";
     public static final String ERROR_SQL = "SQL_ERROR";
     public static final String ERROR_QUERY_CANCELLED = "QUERY_CANCELLED";
     public static final String ERROR_QUERY_NOT_FOUND = "QUERY_NOT_FOUND";

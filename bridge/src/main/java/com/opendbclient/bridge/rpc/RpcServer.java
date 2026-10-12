@@ -40,6 +40,18 @@ public final class RpcServer implements EventSink {
 
     private final BufferedReader reader;
     private final PrintStream writer;
+
+    /**
+     * How to unblock a thread parked in {@link #serve()}.
+     *
+     * <p>Closing a {@link BufferedReader} whose {@code readLine()} is blocked does not reliably
+     * wake it, and for a {@code FileInputStream}-backed reader it deadlocks: {@code close()} needs
+     * the {@code StreamDecoder} lock that the blocked native read holds. The caller therefore
+     * supplies a way to close the <em>raw</em> stream, whose close unblocks the read without
+     * touching the reader's own lock.
+     */
+    private final Runnable unblock;
+
     private final Map<String, Handler> handlers = new ConcurrentHashMap<>();
     private final Set<RequestContext> active = ConcurrentHashMap.newKeySet();
     private final ExecutorService workers;
@@ -56,8 +68,19 @@ public final class RpcServer implements EventSink {
     private volatile Runnable exitHook = () -> System.exit(0);
 
     public RpcServer(BufferedReader reader, PrintStream writer) {
+        this(reader, writer, () -> {
+            try {
+                reader.close();
+            } catch (IOException ignored) {
+                // Closing stdin failing is not actionable; serve() also checks `stopping`.
+            }
+        });
+    }
+
+    public RpcServer(BufferedReader reader, PrintStream writer, Runnable unblock) {
         this.reader = reader;
         this.writer = writer;
+        this.unblock = unblock;
         int parallelism = Math.max(4, Runtime.getRuntime().availableProcessors());
         this.workers = Executors.newFixedThreadPool(parallelism, new WorkerThreadFactory());
         Log.debug("rpc server using %d worker threads", parallelism);
@@ -286,9 +309,9 @@ public final class RpcServer implements EventSink {
 
     private void unblockReader() {
         try {
-            reader.close();
-        } catch (IOException ignored) {
-            // Closing stdin failing is not actionable; serve() also checks `stopping`.
+            unblock.run();
+        } catch (RuntimeException ignored) {
+            // Unblocking is best-effort; the explicit exit in terminate() is the guarantee.
         }
     }
 

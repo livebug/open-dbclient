@@ -13,9 +13,20 @@ import { describeError, log } from '../util/logger';
 import { currentLocale, t } from '../util/i18n';
 import type { ConnectionService } from '../service/ConnectionService';
 import type { ExportService } from '../service/ExportService';
+import type { MetadataService } from '../service/MetadataService';
+import type { VirtualDocumentProvider } from '../util/VirtualDocuments';
+import {
+  buildStatements,
+  countStatement,
+  qualifiedTableName,
+  sourceTableOf,
+  type SourceTable,
+} from '../sql/statementBuilder';
 import {
   DEFAULT_PAGE_SIZE,
   type GridColumn,
+  type GridRowForSql,
+  type GridStatementKind,
   type GridValue,
   type HostToWebviewMessage,
   type WebviewToHostMessage,
@@ -27,6 +38,14 @@ export interface ResultPanelDependencies {
   readonly bridge: JdbcBridge;
   readonly connections: ConnectionService;
   readonly exportService: ExportService;
+  /**
+   * Read for one thing only: a table's primary key, and only when the user asks for a statement that
+   * has to identify a row. That read is a `getColumns` call, which on the drivers this project is
+   * aimed at is the expensive one, so it must never happen on the path that merely shows a result.
+   */
+  readonly metadata: MetadataService;
+  /** Where a generated statement is opened for review. */
+  readonly virtualDocuments: VirtualDocumentProvider;
 }
 
 /** How a panel was opened, and what to do when the user asks to run it again. */
@@ -57,6 +76,26 @@ export class ResultPanel implements vscode.Disposable {
   private connectionName = '';
   private pageSize: number;
   private lastMessage: HostToWebviewMessage | undefined;
+
+  /**
+   * Columns that identify a row, per connection and table.
+   *
+   * Static, so the answer outlives the panel: a user who has said that `order_no` identifies a row
+   * should not be asked again for the next query against the same table. Keyed by connection as well
+   * as table, because one table name means different things on two databases.
+   */
+  private static readonly identityCache = new Map<string, readonly number[]>();
+
+  /** The identity columns in force for what this panel is showing. */
+  private identity: readonly number[] | undefined;
+
+  /**
+   * The true total, once the user has asked for it.
+   *
+   * Kept because the panel is repainted on every page change and the count must survive that: asking
+   * a second time would mean another full scan of a table that may be large.
+   */
+  private countedTotal: number | undefined;
 
   /**
    * Finds the query a connection is currently running, if any.
@@ -144,6 +183,9 @@ export class ResultPanel implements vscode.Disposable {
     this.queryId = undefined;
     this.runningQueryId = queryId;
     this.columns = [];
+    // A new statement is a different result: the old total and the old identity do not describe it.
+    this.countedTotal = undefined;
+    this.identity = undefined;
     this.post({ type: 'running', sql, connectionName });
   }
 
@@ -154,6 +196,8 @@ export class ResultPanel implements vscode.Disposable {
     this.queryId = result.queryId;
     this.runningQueryId = undefined;
     this.columns = (result.columns ?? []).map(toGridColumn);
+    this.countedTotal = undefined;
+    this.identity = undefined;
 
     const message: HostToWebviewMessage = {
       type: 'result',
@@ -235,9 +279,16 @@ export class ResultPanel implements vscode.Disposable {
     switch (message.type) {
       case 'ready':
         // The webview reloads whenever the panel is moved or restored, so the current content is
-        // replayed rather than lost.
+        // replayed rather than lost. The result goes first: the grid clears its own derived state when
+        // it receives one, so anything sent before it would be wiped.
         if (this.lastMessage) {
           this.post(this.lastMessage);
+        }
+        if (this.countedTotal !== undefined) {
+          this.post({ type: 'totalCount', total: this.countedTotal });
+        }
+        if (this.identity) {
+          this.postIdentity(this.identity);
         }
         break;
 
@@ -257,6 +308,18 @@ export class ResultPanel implements vscode.Disposable {
 
       case 'cancel':
         await this.cancelRunning();
+        break;
+
+      case 'generateSql':
+        await this.generateSql(message.kind, message.rows);
+        break;
+
+      case 'countRows':
+        await this.countRows();
+        break;
+
+      case 'chooseIdentityColumns':
+        await this.chooseIdentityColumns();
         break;
 
       case 'report':
@@ -303,6 +366,274 @@ export class ResultPanel implements vscode.Disposable {
     } catch (error) {
       log.debug(`Cancelling the query failed: ${describeError(error)}`);
     }
+  }
+
+  // ------------------------------------------------------------------
+  // statements written from the grid
+  // ------------------------------------------------------------------
+
+  /**
+   * Writes the SQL that would reproduce or change the selected rows, and shows it.
+   *
+   * Nothing is executed. The statements are opened in a read-only document and put on the clipboard,
+   * because a grid is the wrong place to confirm a write and because the person asking for the SQL
+   * usually wants to review it, adjust it, or paste it somewhere else entirely.
+   */
+  private async generateSql(kind: GridStatementKind, rows: readonly GridRowForSql[]): Promise<void> {
+    if (rows.length === 0) {
+      this.post({ type: 'sqlFailed', message: t('Select at least one row first.') });
+      return;
+    }
+
+    // Where the rows came from is decided by what the driver reported per column, never by parsing the
+    // statement: a result of a join has no single table to write back to.
+    const source = sourceTableOf(this.columns);
+    if (!source.table) {
+      this.post({ type: 'sqlFailed', message: source.reason ?? t('This result cannot be written back.') });
+      return;
+    }
+    const table = source.table;
+
+    let identity: readonly number[] | undefined;
+    if (kind !== 'insert') {
+      identity = await this.resolveIdentity(table, false);
+      if (!identity || identity.length === 0) {
+        this.post({
+          type: 'sqlFailed',
+          message: t('No column was chosen to identify a row, so the statement was not written.'),
+        });
+        return;
+      }
+    }
+
+    const outcome = buildStatements({
+      kind,
+      table,
+      columns: this.columns,
+      rows: rows.map((row) => row.original),
+      identity,
+      changes: rows.flatMap((row, index) =>
+        (row.changes ?? []).map((change) => ({
+          row: index,
+          column: change.column,
+          value: change.value,
+          isNull: change.isNull,
+        })),
+      ),
+      quote: this.quoteFor(),
+    });
+
+    if (!outcome.ok) {
+      this.post({ type: 'sqlFailed', message: outcome.message });
+      return;
+    }
+
+    const path = `${this.options.key.replace(/[^\w.-]+/g, '_')}.changes`;
+    try {
+      await this.options.virtualDocuments.show(path, 'sql', outcome.sql);
+      await vscode.env.clipboard.writeText(outcome.sql);
+    } catch (error) {
+      log.debug(`Could not show the generated SQL: ${describeError(error)}`);
+    }
+
+    this.post({
+      type: 'sqlReady',
+      kind,
+      statements: outcome.statements,
+      warnings: outcome.warnings,
+    });
+
+    const summary = t(
+      'Copied {0} statement(s) for {1}.',
+      outcome.statements,
+      qualifiedTableName(table, this.quoteFor()),
+    );
+    if (outcome.warnings.length > 0) {
+      // A warning here means a value that cannot be written back as it stands - which is worth a
+      // dialog rather than a line in the panel, because the SQL is already on the clipboard.
+      void vscode.window.showWarningMessage(`${summary} ${outcome.warnings.join(' · ')}`);
+    } else {
+      void vscode.window.showInformationMessage(summary);
+    }
+  }
+
+  /** Asks which columns identify a row, and remembers the answer for the table. */
+  private async chooseIdentityColumns(): Promise<void> {
+    const source = sourceTableOf(this.columns);
+    if (!source.table) {
+      this.post({ type: 'sqlFailed', message: source.reason ?? t('This result cannot be written back.') });
+      return;
+    }
+    const chosen = await this.resolveIdentity(source.table, true);
+    if (!chosen || chosen.length === 0) {
+      return;
+    }
+    this.post({
+      type: 'notice',
+      message: t('Rows will be identified by {0}.', this.identityNames(chosen)),
+    });
+  }
+
+  /**
+   * The identity columns for a table: the primary key, or the user's answer.
+   *
+   * The metadata read is deliberately last and lazy. It is a `getColumns` call with a per-table cache
+   * on the user's side, and on the slow drivers this project exists for that call is minutes; making
+   * every result pay for it so that a statement *might* be requested later would be the wrong trade.
+   */
+  private async resolveIdentity(
+    table: SourceTable,
+    force: boolean,
+  ): Promise<readonly number[] | undefined> {
+    const connectionId = this.findConnectionId();
+    if (!connectionId) {
+      this.post({ type: 'sqlFailed', message: t('The connection for this result is no longer open.') });
+      return undefined;
+    }
+
+    const key = `${connectionId}|${table.catalog ?? ''}|${table.schema ?? ''}|${table.name}`;
+    if (!force) {
+      const remembered = ResultPanel.identityCache.get(key);
+      if (remembered) {
+        this.identity = remembered;
+        return remembered;
+      }
+      const primary = await this.primaryKeyColumns(connectionId, table);
+      if (primary.length > 0) {
+        ResultPanel.identityCache.set(key, primary);
+        this.identity = primary;
+        return primary;
+      }
+    }
+
+    const chosen = await this.askIdentityColumns(table);
+    if (!chosen || chosen.length === 0) {
+      return undefined;
+    }
+    ResultPanel.identityCache.set(key, chosen);
+    this.identity = chosen;
+    return chosen;
+  }
+
+  /** The result's column indexes that the table's primary key covers, or none. */
+  private async primaryKeyColumns(
+    connectionId: string,
+    table: SourceTable,
+  ): Promise<readonly number[]> {
+    try {
+      const columns = await this.options.metadata.columns({
+        connectionId,
+        catalog: table.catalog,
+        schema: table.schema,
+        table: table.name,
+        url: this.options.connections.urlOf(connectionId),
+      });
+      const keys: number[] = [];
+      this.columns.forEach((column, index) => {
+        const match = columns.find(
+          (candidate) => candidate.name.toLowerCase() === column.name.toLowerCase(),
+        );
+        if (match?.primaryKey) {
+          keys.push(index);
+        }
+      });
+      if (keys.length > 0) {
+        log.debug(`Identified rows of ${table.name} by its primary key: ${this.identityNames(keys)}`);
+      }
+      return keys;
+    } catch (error) {
+      // The user is asked to choose instead; failing to read a key must not make the grid unusable.
+      log.debug(`Could not read the primary key of ${table.name}: ${describeError(error)}`);
+      return [];
+    }
+  }
+
+  /** Shows the result's columns and lets the user pick the ones that identify a row. */
+  private async askIdentityColumns(table: SourceTable): Promise<readonly number[] | undefined> {
+    const picked = await vscode.window.showQuickPick(
+      this.columns.map((column, index) => ({
+        label: column.label || column.name,
+        description: column.displayType,
+        detail: column.label && column.label !== column.name ? column.name : undefined,
+        index,
+      })),
+      {
+        title: t('Columns that identify a row of {0}', table.name),
+        placeHolder: t('The WHERE clause is built from these; values must be unique per row'),
+        canPickMany: true,
+        ignoreFocusOut: true,
+      },
+    );
+    if (!picked || picked.length === 0) {
+      return undefined;
+    }
+    return picked.map((entry) => entry.index).sort((left, right) => left - right);
+  }
+
+  /** Tells the grid which columns are in force, so the panel can say what a statement will match. */
+  private postIdentity(indexes: readonly number[]): void {
+    this.post({ type: 'identityColumns', columns: indexes.map((index) => this.columns[index]?.name ?? `#${index + 1}`) });
+  }
+
+  private identityNames(indexes: readonly number[]): string {
+    return indexes.map((index) => this.columns[index]?.name ?? `#${index + 1}`).join(', ');
+  }
+
+  /**
+   * Counts what the statement returns in total.
+   *
+   * A result larger than `query.maxRows` is shown truncated, and the row count in the status bar is
+   * then the ceiling rather than the answer. This runs the count the user asked for, on the same
+   * connection, and keeps it: a repaint must not turn into a second scan of a large table.
+   */
+  private async countRows(): Promise<void> {
+    const connectionId = this.findConnectionId();
+    if (!connectionId) {
+      this.post({ type: 'countFailed', message: t('The connection for this result is no longer open.') });
+      return;
+    }
+    const statement = countStatement(this.sourceSql);
+    if (!statement) {
+      this.post({
+        type: 'countFailed',
+        message: t('Only a statement that returns rows can be counted.'),
+      });
+      return;
+    }
+
+    try {
+      const result = await this.options.bridge.request<QueryExecuteResult>(
+        Methods.queryExecute,
+        { connectionId, sql: statement, maxRows: 1, pageSize: 1 },
+        { timeoutMs: 0 },
+      );
+      const value = result.rows?.[0]?.[0];
+      const total = typeof value === 'number' ? value : Number(value);
+      if (!Number.isFinite(total)) {
+        throw new Error(String(value));
+      }
+      this.countedTotal = total;
+      this.post({ type: 'totalCount', total });
+      log.info(`Counted ${total} row(s) for the statement in this panel`);
+      // The bridge caches every result it produces; a count nobody will page through must not hold
+      // part of the budget.
+      if (result.queryId) {
+        void this.options.bridge
+          .request(Methods.queryClose, { queryId: result.queryId })
+          .catch((error: unknown) => log.debug(`Releasing the count result failed: ${describeError(error)}`));
+      }
+    } catch (error) {
+      log.debug(`Counting the result failed: ${describeError(error)}`);
+      this.post({ type: 'countFailed', message: describeError(error) });
+    }
+  }
+
+  /** The driver's quote character, or undefined for a database that cannot quote at all. */
+  private quoteFor(): string | undefined {
+    const connectionId = this.findConnectionId();
+    return connectionId
+      ? this.options.connections.capabilities(connectionId)?.identifierQuoteString
+      : undefined;
   }
 
   private async exportCurrent(): Promise<void> {
@@ -471,6 +802,10 @@ function toGridColumn(column: ResultColumnInfo): GridColumn {
     displayType: column.displayType,
     jdbcTypeName: column.jdbcTypeName,
     tableName: column.tableName,
+    // Carried so a statement written from the grid can name the table as the database does. Empty
+    // strings are dropped: a driver that reports "" for "no schema" must not produce `""."t"`.
+    schemaName: column.schemaName || undefined,
+    catalogName: column.catalogName || undefined,
     remarks: column.remarks,
   };
 }
@@ -519,7 +854,6 @@ function renderHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {
     <div id="toolbar"></div>
     <div id="viewport"><table id="grid"><thead></thead><tbody></tbody></table></div>
     <div id="status"></div>
-    <div id="detail" hidden></div>
   </div>
   <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>

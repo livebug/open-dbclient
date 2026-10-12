@@ -148,6 +148,10 @@ export class MetadataCache {
     if (!this.connections.isConnected(connectionId)) {
       return;
     }
+    const startedAt = Date.now();
+    // Said before the work rather than after it: these two reads happen while the user is looking at a
+    // freshly connected tree, and if they are slow this line is what makes the cause visible.
+    log.debug(`Prefetching the table list of '${connectionId}' for completion`);
     try {
       const [schemas, allTables] = await Promise.all([
         this.metadata.schemas({ connectionId, url: this.connections.urlOf(connectionId) }).catch(() => [] as string[]),
@@ -164,19 +168,23 @@ export class MetadataCache {
         defaultSchema: schemas.length === 1 ? schemas[0] : undefined,
         qualifiers: buildQualifiers(schemas, allTables),
       });
-      log.debug(`Completion cache: ${names.length} table(s) for '${connectionId}'`);
+      log.debug(
+        `Completion cache: ${names.length} table(s) for '${connectionId}' in ${Date.now() - startedAt} ms`,
+      );
     } catch (error) {
-      log.debug(`Could not preload tables for completion: ${String(error)}`);
+      log.debug(`Could not preload tables for completion after ${Date.now() - startedAt} ms: ${String(error)}`);
     }
   }
 
   private async loadColumns(connectionId: string, table: string): Promise<readonly CachedColumn[]> {
+    const startedAt = Date.now();
     try {
       const columns: ColumnInfo[] = await this.metadata.columns({
         connectionId,
         table,
         url: this.connections.urlOf(connectionId),
       });
+      log.debug(`Loaded ${columns.length} column(s) of '${table}' in ${Date.now() - startedAt} ms`);
       return columns.map((column) => ({
         name: column.name,
         displayType: column.displayType,
@@ -186,7 +194,7 @@ export class MetadataCache {
     } catch (error) {
       // Remembered so a table the driver cannot describe is not retried on every keystroke.
       this.failedColumns.add(`${connectionId}|${table.toLowerCase()}`);
-      log.debug(`Could not load columns of '${table}': ${String(error)}`);
+      log.debug(`Could not load columns of '${table}' after ${Date.now() - startedAt} ms: ${String(error)}`);
       return [];
     }
   }

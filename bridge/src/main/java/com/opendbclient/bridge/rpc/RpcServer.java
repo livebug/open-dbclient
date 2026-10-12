@@ -248,14 +248,22 @@ public final class RpcServer implements EventSink {
 
         try {
             workers.execute(() -> {
+                // Timed around the handler rather than around the frame, so the number is the work
+                // the request asked for and not the time it spent queued behind another one. Pairing
+                // it with the caller's own measurement is what separates "the bridge was busy" from
+                // "the database was slow".
+                long startNanos = System.nanoTime();
                 try {
                     Object result = handler.handle(params, ctx);
                     respondResult(id, result);
                     metrics.recordHandled();
+                    Log.debug("handled %s in %d ms", method, elapsedMillis(startNanos));
                 } catch (RpcException known) {
                     fail(id, known);
+                    Log.debug("%s failed after %d ms", method, elapsedMillis(startNanos));
                 } catch (Throwable failure) {
                     fail(id, RpcException.fromThrowable(failure));
+                    Log.debug("%s failed after %d ms", method, elapsedMillis(startNanos));
                 } finally {
                     active.remove(ctx);
                     metrics.removeActive();
@@ -271,6 +279,11 @@ public final class RpcServer implements EventSink {
             metrics.removeActive();
             fail(id, new RpcException(Protocol.ERROR_INTERNAL, "the bridge is shutting down"));
         }
+    }
+
+    /** Milliseconds since a {@code System.nanoTime()} reading. */
+    private static long elapsedMillis(long startNanos) {
+        return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos);
     }
 
     /**

@@ -113,6 +113,12 @@ export class MetadataService {
     const params: Record<string, unknown> = { connectionId: request.connectionId };
     putIfPresent(params, 'catalog', request.catalog);
 
+    // Logged because this is one half of the completion prefetch, and the pair is the largest single
+    // cost a connection pays after it comes up. Without a line here, a slow prefetch is invisible.
+    log.debug(
+      `Reading the schemas of ${request.connectionId}` +
+        `${request.catalog ? ` in ${request.catalog}` : ''} from the driver's metadata`,
+    );
     const result = await this.request<{ schemas: string[] }>(Methods.metadataSchemas, params);
     return result.schemas ?? [];
   }
@@ -147,6 +153,12 @@ export class MetadataService {
       params.types = [...request.types];
     }
 
+    const scope = [request.catalog, request.schema]
+      .filter((part): part is string => part !== undefined && part !== '')
+      .join('.');
+    log.debug(
+      `Reading the tables of ${scope === '' ? request.connectionId : scope} from the driver's metadata`,
+    );
     const result = await this.request<{ tables: TableInfo[] }>(Methods.metadataTables, params);
     return result.tables ?? [];
   }

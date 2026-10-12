@@ -80,6 +80,7 @@ export class DriverManager implements vscode.Disposable {
   }
 
   private async performRegistration(): Promise<DriverRegistrationResult> {
+    const startedAt = Date.now();
     const jarPaths = await this.collectJars();
     const driverClassNames = vscode.workspace
       .getConfiguration()
@@ -88,6 +89,7 @@ export class DriverManager implements vscode.Disposable {
       .filter((name) => name.length > 0);
 
     log.debug(`Registering ${jarPaths.length} driver jar(s) and ${driverClassNames.length} explicit class name(s)`);
+    log.debug(`Scanning for driver jars took ${Date.now() - startedAt} ms`);
 
     const result = await this.bridge.request<DriverRegistrationResult>(Methods.driverRegister, {
       jarPaths,
@@ -108,7 +110,9 @@ export class DriverManager implements vscode.Disposable {
       log.warn(`Driver '${stale}' was replaced or removed; connections using it were closed`);
     }
 
-    log.info(`Loaded ${this.drivers.length} JDBC driver(s)`);
+    // Included in the line rather than beside it: a cold bridge starts here, so this number contains
+    // the JVM start, the jar scan and the class loading that a first connect otherwise pays for.
+    log.info(`Loaded ${this.drivers.length} JDBC driver(s) in ${Date.now() - startedAt} ms`);
     this.emitter.fire();
     return result;
   }

@@ -59,6 +59,7 @@ export class RpcChannel implements Disposable {
     return new Promise<T>((resolve, reject) => {
       const pending: PendingRequest = {
         method,
+        startedAt: Date.now(),
         resolve: resolve as (value: unknown) => void,
         reject,
       };
@@ -68,6 +69,7 @@ export class RpcChannel implements Disposable {
           this.pending.delete(id);
           // A timed-out request is still running in the bridge. The caller keeps the id it needs to
           // cancel it, which is why this only fails the promise rather than tearing anything down.
+          log.warn(`RPC '${method}' timed out after ${timeoutMs} ms; the bridge may still be working on it`);
           reject(new RpcError(
             'TIMEOUT',
             `Timed out after ${timeoutMs} ms waiting for '${method}' to finish. The request may still be running.`,
@@ -78,8 +80,13 @@ export class RpcChannel implements Disposable {
       this.pending.set(id, pending);
       try {
         this.writeLine(JSON.stringify({ id, method, params: params ?? {} }));
+        // Trace, because a round trip is the most frequent thing this extension does and at debug it
+        // would bury everything else. It is here for the question a slow connect raises - whether the
+        // time went to the bridge or to the caller.
+        log.trace(`RPC '${method}' sent as #${id}`);
       } catch (error) {
         this.settle(id);
+        log.debug(`RPC '${method}' could not be sent: ${describe(error)}`);
         reject(error instanceof Error ? error : new Error(String(error)));
       }
     });
@@ -157,15 +164,22 @@ export class RpcChannel implements Disposable {
       return;
     }
     this.settle(id);
+    const elapsedMillis = Date.now() - pending.startedAt;
 
     if (value.ok === true) {
+      log.trace(`RPC '${pending.method}' completed in ${elapsedMillis} ms`);
       pending.resolve(value.result);
       return;
     }
     if (value.ok === false) {
-      pending.reject(toRpcError(value.error));
+      const failure = toRpcError(value.error);
+      // Debug rather than trace: a failed request is worth seeing without turning on the firehose,
+      // and the duration is what tells a refused request apart from one that waited a minute.
+      log.debug(`RPC '${pending.method}' failed after ${elapsedMillis} ms: [${failure.code}] ${failure.message}`);
+      pending.reject(failure);
       return;
     }
+    log.debug(`RPC '${pending.method}' failed after ${elapsedMillis} ms: the response had no ok field`);
     pending.reject(new RpcError('MALFORMED', 'The bridge sent a response with no ok field'));
   }
 }
@@ -210,6 +224,8 @@ export class BridgeStoppedError extends Error {
 
 interface PendingRequest {
   readonly method: string;
+  /** When the request was written, so a round trip can be reported in milliseconds. */
+  readonly startedAt: number;
   readonly resolve: (value: unknown) => void;
   readonly reject: (error: Error) => void;
   timer?: NodeJS.Timeout;

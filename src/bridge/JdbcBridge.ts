@@ -100,10 +100,18 @@ export class JdbcBridge implements vscode.Disposable {
    */
   async ensureStarted(): Promise<void> {
     if (this.state === 'ready' && this.child) {
+      log.trace('The JDBC bridge is already running');
       return;
     }
     if (this.disposed) {
       throw new BridgeStoppedError(t('The extension is shutting down.'));
+    }
+    if (this.startPromise) {
+      // Worth saying out loud: a caller inside this branch pays for the JVM start another caller
+      // began, which is the case that makes a first connect look slow for no visible reason.
+      log.debug('Waiting for the JDBC bridge to finish starting');
+    } else {
+      log.debug('The JDBC bridge is not running; starting it');
     }
     this.startPromise ??= this.start().finally(() => {
       this.startPromise = undefined;
@@ -142,6 +150,7 @@ export class JdbcBridge implements vscode.Disposable {
    * in the meantime.
    */
   async stop(): Promise<void> {
+    const startedAt = Date.now();
     this.intentionalStop = true;
     if (this.restartTimer) {
       clearTimeout(this.restartTimer);
@@ -172,6 +181,7 @@ export class JdbcBridge implements vscode.Disposable {
 
     this.teardownProcess();
     this.setState('stopped');
+    log.debug(`The JDBC bridge stopped in ${Date.now() - startedAt} ms`);
   }
 
   dispose(): void {
@@ -192,14 +202,19 @@ export class JdbcBridge implements vscode.Disposable {
   // ------------------------------------------------------------------
 
   private async start(): Promise<void> {
+    const startedAt = Date.now();
     this.setState('starting');
     this.intentionalStop = false;
 
     const jarPath = this.resolveBridgeJar();
+    // Timed on its own: probing for Java spawns `java -version` for each candidate, so on a machine
+    // where the configured JDK is stale this is not the instantaneous step it looks like.
+    const javaLookupStartedAt = Date.now();
     const java = await locateJava();
     const args = this.buildArgs(jarPath);
 
     log.info(`Starting the JDBC bridge with ${java.executable}`);
+    log.debug(`Java lookup took ${Date.now() - javaLookupStartedAt} ms`);
     log.debug(`Bridge arguments: ${args.join(' ')}`);
 
     let child: ChildProcessWithoutNullStreams;
@@ -209,6 +224,7 @@ export class JdbcBridge implements vscode.Disposable {
       this.setState('failed');
       throw new Error(t("Could not start Java at '{0}': {1}", java.executable, describeError(error)));
     }
+    const spawnedAt = Date.now();
 
     this.child = child;
     this.stderrBuffer = '';
@@ -246,9 +262,13 @@ export class JdbcBridge implements vscode.Disposable {
       this.setState('failed');
       throw error;
     }
+    log.debug(`The bridge announced itself ${Date.now() - spawnedAt} ms after the process was spawned`);
 
     this.autoRestarts = 0;
     this.setState('ready');
+    // The figure a first connect needs in order to be read correctly: this whole step happens before
+    // the bridge sees the request, so none of it can appear in the bridge's own connect time.
+    log.info(`The JDBC bridge started in ${Date.now() - startedAt} ms (Java lookup + process start + handshake)`);
   }
 
   private waitForReady(child: ChildProcessWithoutNullStreams, channel: RpcChannel): Promise<void> {

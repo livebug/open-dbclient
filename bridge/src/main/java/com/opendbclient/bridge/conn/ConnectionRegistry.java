@@ -10,6 +10,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
 import com.opendbclient.bridge.json.Json;
 import com.opendbclient.bridge.log.Log;
@@ -86,7 +87,7 @@ public final class ConnectionRegistry {
             }
             if (sameTarget(existing.spec, spec)) {
                 existing.lastUsedMillis = System.currentTimeMillis();
-                Log.debug("reusing open connection '%s'", spec.connectionId());
+                Log.debug("reusing open connection '%s' (no database round trip)", spec.connectionId());
                 return new ProbeResult(
                         spec.connectionId(), spec.driverClassName(), existing.capabilities, 0L);
             }
@@ -94,11 +95,31 @@ public final class ConnectionRegistry {
             closeUnchecked(spec.connectionId());
         }
 
+        // Logged before the work starts, so a connect that never returns - or one that fails before a
+        // driver is even instantiated - still names what it was doing. `describe()` is the sanctioned
+        // rendering: it carries the driver, the URL and the user, never the password.
+        Log.info("opening '%s': %s (pool size %d)", spec.connectionId(), spec.describe(), spec.poolSize());
+
         driverLoader.require(spec.driverClassName());
+
+        // The three parts of "how long did connecting take" have different causes and different
+        // fixes - the physical connect is the database and the network, the capability probe is the
+        // driver answering two dozen DatabaseMetaData questions, and the remainder is pool
+        // bookkeeping and waiting for a slot. Reported as one number they cannot be told apart,
+        // which is exactly the question the split answers.
+        AtomicLong physicalConnectNanos = new AtomicLong();
+        AtomicLong capabilitiesNanos = new AtomicLong();
 
         ConnectionPool pool = new ConnectionPool(
                 spec.connectionId(),
-                () -> driverLoader.open(spec),
+                () -> {
+                    long factoryStartNanos = System.nanoTime();
+                    try {
+                        return driverLoader.open(spec);
+                    } finally {
+                        physicalConnectNanos.set(System.nanoTime() - factoryStartNanos);
+                    }
+                },
                 spec.poolSize(),
                 spec.validationTimeoutSeconds(),
                 TimeUnit.SECONDS.toMillis(spec.maxLifetimeSeconds()),
@@ -109,16 +130,36 @@ public final class ConnectionRegistry {
         try {
             long borrowTimeoutMillis = TimeUnit.SECONDS.toMillis(Math.max(1, spec.connectTimeoutSeconds()))
                     + CONNECT_GRACE_MILLIS;
-            capabilities = pool.withConnection(borrowTimeoutMillis, DatabaseCapabilities::read);
+            capabilities = pool.withConnection(borrowTimeoutMillis, connection -> {
+                long probeStartNanos = System.nanoTime();
+                try {
+                    return DatabaseCapabilities.read(connection);
+                } finally {
+                    capabilitiesNanos.set(System.nanoTime() - probeStartNanos);
+                }
+            });
         } catch (SQLException | RuntimeException failure) {
             // A pool whose first connection failed would otherwise linger holding a slot.
             pool.close();
+            // The dispatcher reports the failure to the caller, but only the bridge can say how long
+            // it spent failing, and a connect that failed after 30 s reads very differently from one
+            // refused instantly.
+            Log.warn("connecting '%s' failed after %d ms: %s",
+                    spec.connectionId(),
+                    elapsedMillis(startNanos),
+                    failure.getMessage());
             throw failure;
         }
-        long connectMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos);
+        long connectMillis = elapsedMillis(startNanos);
 
         entries.put(spec.connectionId(), new Entry(spec, pool, capabilities, ownerTenantId));
-        Log.info("connected '%s': %s (%d ms)", spec.connectionId(), capabilities.describe(), connectMillis);
+        Log.info("connected '%s': %s (%d ms: connect %d ms, capabilities %d ms, queue %d ms)",
+                spec.connectionId(),
+                capabilities.describe(),
+                connectMillis,
+                TimeUnit.NANOSECONDS.toMillis(physicalConnectNanos.get()),
+                TimeUnit.NANOSECONDS.toMillis(capabilitiesNanos.get()),
+                remainderMillis(connectMillis, physicalConnectNanos.get(), capabilitiesNanos.get()));
         return new ProbeResult(spec.connectionId(), spec.driverClassName(), capabilities, connectMillis);
     }
 
@@ -129,21 +170,52 @@ public final class ConnectionRegistry {
      * registering a pool for a connection the user may immediately discard would be wrong.
      */
     public ProbeResult test(ConnectionProfileSpec spec) throws SQLException {
+        // Timed and logged here as well as in {@link #open}: the form's "Test Connection" button is
+        // where a slow database is first noticed, and it used to be the one path that said nothing.
+        // Ahead of the driver check, so an attempt that cannot even find its driver is still named.
+        Log.info("testing '%s': %s", spec.connectionId(), spec.describe());
+
         driverLoader.require(spec.driverClassName());
 
         long startNanos = System.nanoTime();
-        Connection connection = driverLoader.open(spec);
+        Connection connection = null;
         try {
+            connection = driverLoader.open(spec);
             DatabaseCapabilities capabilities = DatabaseCapabilities.read(connection);
-            long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos);
+            long elapsedMillis = elapsedMillis(startNanos);
+            Log.info("test connection '%s' succeeded: %s (%d ms)",
+                    spec.connectionId(), capabilities.describe(), elapsedMillis);
             return new ProbeResult(spec.connectionId(), spec.driverClassName(), capabilities, elapsedMillis);
+        } catch (SQLException | RuntimeException failure) {
+            Log.warn("test connection '%s' failed after %d ms: %s",
+                    spec.connectionId(), elapsedMillis(startNanos), failure.getMessage());
+            throw failure;
         } finally {
-            try {
-                connection.close();
-            } catch (SQLException failure) {
-                Log.debug("closing the test connection failed: %s", failure.getMessage());
+            if (connection != null) {
+                try {
+                    connection.close();
+                } catch (SQLException failure) {
+                    Log.debug("closing the test connection failed: %s", failure.getMessage());
+                }
             }
         }
+    }
+
+    /** Milliseconds since a {@code System.nanoTime()} reading. */
+    private static long elapsedMillis(long startNanos) {
+        return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos);
+    }
+
+    /**
+     * The elapsed time not explained by connecting or probing.
+     *
+     * <p>Clamped at zero because the two parts are measured around the same work but truncated
+     * separately, so rounding can make them add up to one millisecond more than the total.
+     */
+    private static long remainderMillis(long totalMillis, long connectNanos, long capabilitiesNanos) {
+        long accounted = TimeUnit.NANOSECONDS.toMillis(connectNanos)
+                + TimeUnit.NANOSECONDS.toMillis(capabilitiesNanos);
+        return Math.max(0L, totalMillis - accounted);
     }
 
     /** Looks up an open connection, failing when absent or owned by another tenant. */

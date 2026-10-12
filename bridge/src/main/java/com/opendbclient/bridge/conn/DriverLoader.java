@@ -20,6 +20,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 
@@ -201,14 +202,22 @@ public final class DriverLoader {
 
         Properties properties = spec.toDriverProperties();
         return withContextClassLoader(loader, () -> {
+            // The one call that talks to the database's own listener. Timed separately from the
+            // capability probe that follows it, because a slow login and a slow introspection are
+            // different problems: the first is the network or the database, the second is the driver.
+            Log.debug("opening a physical connection: %s", spec.describe());
+            long connectStartNanos = System.nanoTime();
             Connection connection = driver.connect(spec.url(), properties);
+            long connectMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - connectStartNanos);
             if (connection == null) {
                 // Per the Driver contract, null means "this driver does not understand this
                 // URL" - a different problem from a rejected login, and worth saying so.
+                Log.warn("driver %s refused the URL after %d ms", spec.driverClassName(), connectMillis);
                 throw new SQLException(
                         "driver " + spec.driverClassName() + " does not accept the URL '" + spec.url() + "'",
                         "08001");
             }
+            Log.debug("driver %s returned a connection in %d ms", spec.driverClassName(), connectMillis);
             return connection;
         });
     }

@@ -160,19 +160,26 @@ export class DatabaseTreeProvider
     const key = nodeKey(node);
     const cached = this.cache.get(key);
     if (cached) {
+      log.trace(`Expanding '${nodeLabel(node)}' from the cached listing (${cached.length} child/children)`);
       return cached;
     }
 
+    const startedAt = Date.now();
     let children: DatabaseTreeNode[];
     try {
       children = await this.loadChildren(node);
     } catch (error) {
       // A failed expansion must not take the tree down. The node stays expandable so the user can
       // retry, and the reason lands in the log rather than in a modal dialog.
-      log.error(error, `Could not expand '${nodeLabel(node)}'`);
+      log.error(error, `Could not expand '${nodeLabel(node)}' after ${Date.now() - startedAt} ms`);
       return [];
     }
 
+    // One line per expansion, because expanding a connection is where the metadata reads happen and
+    // "which level was slow" is otherwise only answerable from the health report's totals.
+    log.debug(
+      `Expanded '${nodeLabel(node)}' in ${Date.now() - startedAt} ms (${children.length} child/children)`,
+    );
     this.cache.set(key, children);
     return children;
   }

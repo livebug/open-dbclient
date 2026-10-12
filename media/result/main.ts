@@ -508,7 +508,7 @@ document.addEventListener('keydown', (event) => {
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'c' && selectedCell) {
     // Let the browser handle a text selection, but make a plain cell click copyable.
     if (!window.getSelection()?.toString()) {
-      void copyText(valueForCell(selectedCell));
+      void copyText(copyableValue(selectedCell));
     }
   }
 });
@@ -529,7 +529,7 @@ function showContextMenu(x: number, y: number, cell: HTMLTableCellElement): void
   const columnIndex = Number(cell.dataset.column);
 
   contextMenu.append(
-    button(t('Copy value'), () => copyText(valueForCell(cell))),
+    button(t('Copy value'), () => copyText(copyableValue(cell))),
     button(t('Copy column name'), () => copyText(state.columns[columnIndex]?.label ?? '')),
     button(t('Copy row'), () => copyText(rowToText(rowIndex))),
     button(t('Copy row as JSON'), () => copyText(rowToJson(rowIndex))),
@@ -625,6 +625,19 @@ function valueForCell(cell: HTMLTableCellElement): GridValue {
   const rowIndex = Number(cell.dataset.row);
   const columnIndex = Number(cell.dataset.column);
   return state.rows[rowIndex]?.[columnIndex] ?? null;
+}
+
+/**
+ * The text "Copy value" puts on the clipboard.
+ *
+ * Separate from {@link formatCell} because the two answer different questions: a cell is *displayed*
+ * as `NULL`, but copying it has to yield nothing, exactly as "Copy row" already does. Passing the
+ * raw {@link GridValue} to the clipboard instead meant a null cell copied the four characters
+ * `null`, and an array - which `String()` joins with commas - lost its structure entirely.
+ */
+function copyableValue(cell: HTMLTableCellElement): string {
+  const value = valueForCell(cell);
+  return value === null ? '' : formatCell(value);
 }
 
 function rowToText(rowIndex: number): string {

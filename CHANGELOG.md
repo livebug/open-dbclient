@@ -3,6 +3,20 @@
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/),格式参考
 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.6.0] - 2026-10-12
+
+### 新增
+
+- **桥支持共享服务模式 `--listen <port>`**:除默认的 `--stdio`（VS Code 单连接）外，桥现在可以
+  作为常驻 TCP 服务运行，接受任意多个连接，全部共享同一个 JVM、同一套已加载驱动、同一个连接池
+  与结果缓存。核心改动：
+  - 新增 `ServerMetrics`，把请求计数/活跃数/运行时长从单个 `RpcServer` 提到进程级共享；
+  - `HealthService` 去掉对 `RpcServer` 的依赖，健康推送改为**多订阅者**（每连接独立订阅/退订，
+    推送间隔取最紧的那个）；
+  - `RpcServer` 支持共享 worker 池，每连接只保留自己的 `active` 集合（断连只取消自己的请求）；
+  - 请求帧可携带可选 `tenantId`/`sessionId`，透传进 `RequestContext` 供审计/归属使用。
+- 桥版本 `0.2.0 -> 0.3.0`。
+
 ## [0.5.0] - 2026-10-12
 
 ### 新增

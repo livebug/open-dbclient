@@ -10,11 +10,11 @@ import java.lang.management.ThreadMXBean;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import com.opendbclient.bridge.conn.ConnectionRegistry;
 import com.opendbclient.bridge.json.Json;
@@ -22,7 +22,7 @@ import com.opendbclient.bridge.log.Log;
 import com.opendbclient.bridge.result.QueryRegistry;
 import com.opendbclient.bridge.rpc.EventSink;
 import com.opendbclient.bridge.rpc.Protocol;
-import com.opendbclient.bridge.rpc.RpcServer;
+import com.opendbclient.bridge.rpc.ServerMetrics;
 
 /**
  * Collects operational metrics for the bridge process and pushes them on request.
@@ -55,7 +55,7 @@ public final class HealthService implements AutoCloseable {
     private final ConnectionRegistry connections;
     private final QueryRegistry queries;
     private final MetadataMetrics metadata;
-    private final RpcServer server;
+    private final ServerMetrics metrics;
 
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(
             runnable -> {
@@ -64,21 +64,21 @@ public final class HealthService implements AutoCloseable {
                 return thread;
             });
 
-    private final AtomicInteger failureStreak = new AtomicInteger();
+    /** Subscribers and the interval each one asked for; keyed by sink, so one client can unsubscribe without disturbing another. */
+    private final Map<EventSink, Long> subscriptions = new ConcurrentHashMap<>();
 
     private volatile ScheduledFuture<?> pushTask;
-    private volatile EventSink sink;
     private volatile long intervalMillis;
 
     public HealthService(
             ConnectionRegistry connections,
             QueryRegistry queries,
             MetadataMetrics metadata,
-            RpcServer server) {
+            ServerMetrics metrics) {
         this.connections = connections;
         this.queries = queries;
         this.metadata = metadata;
-        this.server = server;
+        this.metrics = metrics;
     }
 
     /** Current metrics, collected synchronously. */
@@ -102,40 +102,27 @@ public final class HealthService implements AutoCloseable {
     }
 
     /**
-     * Starts pushing metrics.
+     * Starts pushing metrics to {@code sink}.
      *
-     * <p>Calling this again replaces the previous subscription rather than adding a second one, and
-     * a zero or negative interval stops it. Without that, a client that subscribed twice would
-     * receive every sample twice and the duplicate would be invisible in the UI.
+     * <p>Each sink subscribes independently: adding one does not disturb another, and the shared
+     * push task runs at the tightest requested interval. A zero or negative interval is ignored.
      */
     public void subscribe(EventSink sink, long requestedIntervalMillis) {
-        unsubscribe();
         if (requestedIntervalMillis <= 0) {
             return;
         }
-
         long interval = Math.min(MAX_INTERVAL_MILLIS, Math.max(MIN_INTERVAL_MILLIS, requestedIntervalMillis));
-        this.sink = sink;
-        this.intervalMillis = interval;
-        this.failureStreak.set(0);
-
-        this.pushTask = scheduler.scheduleWithFixedDelay(this::pushOnce, interval, interval, TimeUnit.MILLISECONDS);
-        Log.debug("Health metrics will be pushed every %d ms", interval);
+        subscriptions.put(sink, interval);
+        reschedule();
     }
 
-    public void unsubscribe() {
-        ScheduledFuture<?> task = this.pushTask;
-        if (task != null) {
-            task.cancel(false);
-            this.pushTask = null;
-            Log.debug("Health metrics subscription stopped");
-        }
-        this.sink = null;
-        this.intervalMillis = 0L;
+    public void unsubscribe(EventSink sink) {
+        subscriptions.remove(sink);
+        reschedule();
     }
 
     public boolean isSubscribed() {
-        return pushTask != null;
+        return !subscriptions.isEmpty();
     }
 
     public long intervalMillis() {
@@ -144,8 +131,40 @@ public final class HealthService implements AutoCloseable {
 
     @Override
     public void close() {
-        unsubscribe();
+        subscriptions.clear();
+        ScheduledFuture<?> task = pushTask;
+        if (task != null) {
+            task.cancel(false);
+            pushTask = null;
+        }
         scheduler.shutdownNow();
+    }
+
+    /** Recomputes the shared push interval and (re)starts the task when the subscriber set changes. */
+    private void reschedule() {
+        synchronized (this) {
+            if (subscriptions.isEmpty()) {
+                if (pushTask != null) {
+                    pushTask.cancel(false);
+                    pushTask = null;
+                }
+                intervalMillis = 0L;
+                return;
+            }
+            long tightest = subscriptions.values().stream()
+                    .mapToLong(Long::longValue)
+                    .min()
+                    .orElse(MAX_INTERVAL_MILLIS);
+            if (pushTask == null || pushTask.isCancelled() || tightest != intervalMillis) {
+                if (pushTask != null) {
+                    pushTask.cancel(false);
+                }
+                intervalMillis = tightest;
+                pushTask = scheduler.scheduleWithFixedDelay(this::pushOnce, tightest, tightest, TimeUnit.MILLISECONDS);
+                Log.debug("Health metrics will be pushed every %d ms to %d subscriber(s)",
+                        tightest, subscriptions.size());
+            }
+        }
     }
 
     // ------------------------------------------------------------------
@@ -153,37 +172,36 @@ public final class HealthService implements AutoCloseable {
     // ------------------------------------------------------------------
 
     private void pushOnce() {
-        EventSink target = this.sink;
-        if (target == null) {
+        if (subscriptions.isEmpty()) {
             return;
         }
-        try {
-            // A slightly smaller payload than a full snapshot: repeating the connection summaries on
-            // every tick would dominate the channel without telling the user anything new.
-            target.emit(Protocol.EVENT_HEALTH_METRICS, Json.obj(
-                    "timestamp", System.currentTimeMillis(),
-                    "uptimeMillis", uptimeMillis(),
-                    "memory", memory(),
-                    "garbageCollector", garbageCollector(),
-                    "threads", threads(),
-                    "server", serverMetrics(),
-                    "connectionCount", connections.openCount(),
-                    "poolSummaries", poolSummaries(),
-                    "cache", cache(),
-                    "queries", queries.metricsPayload()));
-            failureStreak.set(0);
-        } catch (RuntimeException failure) {
-            // If the channel has gone away there is nobody left to push to, so stop rather than log
-            // the same failure on every tick for the rest of the session.
-            if (failureStreak.incrementAndGet() >= 3) {
-                Log.debug("Stopping health pushes after repeated failures: %s", failure.getMessage());
-                unsubscribe();
+        Map<String, Object> payload = Json.obj(
+                "timestamp", System.currentTimeMillis(),
+                "uptimeMillis", uptimeMillis(),
+                "memory", memory(),
+                "garbageCollector", garbageCollector(),
+                "threads", threads(),
+                "server", serverMetrics(),
+                "connectionCount", connections.openCount(),
+                "poolSummaries", poolSummaries(),
+                "cache", cache(),
+                "queries", queries.metricsPayload());
+        for (EventSink target : subscriptions.keySet()) {
+            try {
+                target.emit(Protocol.EVENT_HEALTH_METRICS, payload);
+            } catch (RuntimeException failure) {
+                // The channel has gone away, so there is nobody left to push to on it.
+                Log.debug("Dropping a health subscriber after a failed push: %s", failure.getMessage());
+                subscriptions.remove(target);
             }
+        }
+        if (subscriptions.isEmpty()) {
+            reschedule();
         }
     }
 
     private long uptimeMillis() {
-        return server.uptimeMillis();
+        return metrics.uptimeMillis();
     }
 
     private Map<String, Object> memory() {
@@ -285,10 +303,10 @@ public final class HealthService implements AutoCloseable {
 
     private Map<String, Object> serverMetrics() {
         return Json.obj(
-                "requestsHandled", server.requestsHandled(),
-                "requestFailures", server.requestFailures(),
-                "activeRequests", server.activeRequestCount(),
-                "handlers", server.handlerCount());
+                "requestsHandled", metrics.requestsHandled(),
+                "requestFailures", metrics.requestFailures(),
+                "activeRequests", metrics.activeRequestCount(),
+                "handlers", metrics.handlerCount());
     }
 
     /** One compact entry per open connection, for the connection table on the dashboard. */

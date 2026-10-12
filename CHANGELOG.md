@@ -3,6 +3,18 @@
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/),格式参考
 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.7.0] - 2026-10-12
+
+### 新增
+
+- **共享服务鉴权**：`--listen <port> --token <secret>` 开启共享密钥鉴权，每个请求帧必须携带
+  `token`，否则返回 `UNAUTHORIZED`（常量时间比较，防时序侧信道）。保护共享桥不被任意可达端口的
+  客户端驱动、也防 `system.shutdown` 被滥用。
+- **连接归属隔离**：连接记住打开它的租户（`connection.open` 的 `tenantId`），后续
+  `query.execute` / `metadata.*` / `connection.close` / 事务等操作必须携带同一 `tenantId`，否则
+  返回 `FORBIDDEN`。一个租户不能使用或关闭另一个租户的连接；`connection.list` 会带出 `tenantId`。
+- 桥版本 `0.3.0 -> 0.4.0`。
+
 ## [0.6.0] - 2026-10-12
 
 ### 新增

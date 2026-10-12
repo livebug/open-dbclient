@@ -73,9 +73,9 @@ public final class BridgeMain {
                 System.getProperty("java.vendor"),
                 Runtime.getRuntime().maxMemory() / (1024 * 1024));
 
-        int listenPort = parseListenPort(args);
-        if (listenPort > 0) {
-            runListenServer(listenPort, diagnostics);
+        Args parsed = parseArgs(args);
+        if (parsed.listenPort() > 0) {
+            runListenServer(parsed.listenPort(), parsed.token(), diagnostics);
         } else {
             runStdio(protocolOut, diagnostics);
         }
@@ -115,19 +115,20 @@ public final class BridgeMain {
     }
 
     /** {@code --listen <port>}: a shared server serving any number of connections. */
-    private static void runListenServer(int port, PrintStream diagnostics) {
+    private static void runListenServer(int port, String token, PrintStream diagnostics) {
         ServerMetrics metrics = new ServerMetrics();
         BridgeServices services = new BridgeServices(metrics);
         ExecutorService workers = newWorkerPool();
         registerShutdownHook(services, workers, null, diagnostics);
 
         try (ServerSocket serverSocket = new ServerSocket(port)) {
-            Log.info("bridge %s listening on port %d", BuildInfo.VERSION, port);
+            Log.info("bridge %s listening on port %d%s", BuildInfo.VERSION, port,
+                    token == null ? "" : " (token required)");
             while (true) {
                 Socket socket = serverSocket.accept();
                 socket.setTcpNoDelay(true);
                 Thread connection = new Thread(
-                        () -> handleConnection(socket, services, metrics, workers),
+                        () -> handleConnection(socket, services, metrics, workers, token),
                         "bridge-connection");
                 connection.setDaemon(false);
                 connection.start();
@@ -141,7 +142,8 @@ public final class BridgeMain {
     }
 
     private static void handleConnection(
-            Socket socket, BridgeServices services, ServerMetrics metrics, ExecutorService workers) {
+            Socket socket, BridgeServices services, ServerMetrics metrics, ExecutorService workers,
+            String requiredToken) {
         try (socket) {
             BufferedReader reader = new BufferedReader(
                     new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
@@ -154,7 +156,7 @@ public final class BridgeMain {
                             // Best-effort; serve() also checks its stopping flag.
                         }
                     },
-                    metrics, workers);
+                    metrics, workers, requiredToken);
             services.registerHandlers(server);
             server.serve();
         } catch (IOException failure) {
@@ -195,11 +197,16 @@ public final class BridgeMain {
         }, "bridge-shutdown"));
     }
 
-    private static int parseListenPort(String[] args) {
+    private record Args(int listenPort, String token) {
+    }
+
+    private static Args parseArgs(String[] args) {
+        int listenPort = -1;
+        String token = null;
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
                 case "--stdio" -> {
-                    return -1;
+                    return new Args(-1, null);
                 }
                 case "--listen", "-p", "--port" -> {
                     if (i + 1 >= args.length) {
@@ -211,16 +218,23 @@ public final class BridgeMain {
                         if (port <= 0 || port > 65535) {
                             throw new NumberFormatException();
                         }
-                        return port;
+                        listenPort = port;
                     } catch (NumberFormatException invalid) {
                         Log.error("invalid port: %s", args[i]);
                         System.exit(2);
                     }
                 }
+                case "--token" -> {
+                    if (i + 1 >= args.length) {
+                        Log.error("--token requires a value");
+                        System.exit(2);
+                    }
+                    token = args[++i];
+                }
                 default -> Log.warn("ignoring unknown argument: %s", args[i]);
             }
         }
-        return -1;
+        return new Args(listenPort, token);
     }
 
     private static String firstNonBlank(String... candidates) {

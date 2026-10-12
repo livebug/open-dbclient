@@ -35,7 +35,7 @@ public final class ConnectionHandlers {
     public static void register(RpcServer server, BridgeServices services) {
         server.register(Protocol.CONNECTION_OPEN, (params, ctx) -> {
             ConnectionProfileSpec spec = ConnectionProfileSpec.from(params);
-            return services.connections().open(spec).toPayload();
+            return services.connections().open(spec, ctx.tenantId()).toPayload();
         });
 
         server.register(Protocol.CONNECTION_TEST, (params, ctx) -> {
@@ -53,7 +53,7 @@ public final class ConnectionHandlers {
             // can abort the statement, and releasing results first would orphan an active query.
             List<String> cancelledQueries = services.queries().cancelForConnection(connectionId);
             List<String> releasedResults = services.queries().releaseForConnection(connectionId);
-            boolean closed = services.connections().close(connectionId);
+            boolean closed = services.connections().close(connectionId, ctx.tenantId());
 
             Map<String, Object> payload = Json.obj("connectionId", connectionId, "closed", closed);
             if (!cancelledQueries.isEmpty()) {
@@ -72,22 +72,23 @@ public final class ConnectionHandlers {
         server.register(Protocol.CONNECTION_BEGIN_TRANSACTION, (params, ctx) -> {
             String connectionId = Json.requireStr(params, "connectionId");
             long timeoutSeconds = Math.max(0L, Json.longValue(params, "timeoutSeconds", 0L));
-            return services.connections().beginTransaction(connectionId, TimeUnit.SECONDS.toMillis(timeoutSeconds));
+            return services.connections().beginTransaction(
+                    connectionId, TimeUnit.SECONDS.toMillis(timeoutSeconds), ctx.tenantId());
         });
 
         server.register(Protocol.CONNECTION_COMMIT_TRANSACTION, (params, ctx) -> {
             String connectionId = Json.requireStr(params, "connectionId");
-            return services.connections().commitTransaction(connectionId);
+            return services.connections().commitTransaction(connectionId, ctx.tenantId());
         });
 
         server.register(Protocol.CONNECTION_ROLLBACK_TRANSACTION, (params, ctx) -> {
             String connectionId = Json.requireStr(params, "connectionId");
-            return services.connections().rollbackTransaction(connectionId);
+            return services.connections().rollbackTransaction(connectionId, ctx.tenantId());
         });
 
         server.register(Protocol.CONNECTION_TRANSACTION_STATUS, (params, ctx) -> {
             String connectionId = Json.requireStr(params, "connectionId");
-            return services.connections().transactionStatus(connectionId);
+            return services.connections().transactionStatus(connectionId, ctx.tenantId());
         });
     }
 }

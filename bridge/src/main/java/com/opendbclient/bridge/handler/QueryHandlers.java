@@ -106,7 +106,7 @@ public final class QueryHandlers {
         try {
             Execution execution;
             try (TransactionRegistry.StatementConnection connection =
-                    services.connections().acquire(connectionId, BORROW_TIMEOUT_MILLIS)) {
+                    services.connections().acquire(connectionId, BORROW_TIMEOUT_MILLIS, ctx.tenantId())) {
                 try {
                     execution = runStatement(connection.connection(), sql, active, maxRows, fetchSize, columnRemarks, connectionId);
                 } catch (IOException failure) {

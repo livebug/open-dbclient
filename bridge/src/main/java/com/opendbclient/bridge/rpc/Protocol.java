@@ -116,6 +116,8 @@ public final class Protocol {
     public static final String ERROR_TRANSACTION_ACTIVE = "TRANSACTION_ACTIVE";
     public static final String ERROR_TRANSACTION_NOT_FOUND = "TRANSACTION_NOT_FOUND";
     public static final String ERROR_TRANSACTION_TIMEOUT = "TRANSACTION_TIMEOUT";
+    public static final String ERROR_UNAUTHORIZED = "UNAUTHORIZED";
+    public static final String ERROR_FORBIDDEN = "FORBIDDEN";
     public static final String ERROR_SQL = "SQL_ERROR";
     public static final String ERROR_QUERY_CANCELLED = "QUERY_CANCELLED";
     public static final String ERROR_QUERY_NOT_FOUND = "QUERY_NOT_FOUND";

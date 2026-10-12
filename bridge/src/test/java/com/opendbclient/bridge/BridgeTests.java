@@ -1,5 +1,6 @@
 package com.opendbclient.bridge;
 
+import com.opendbclient.bridge.conn.ConnectionRegistryOwnershipTests;
 import com.opendbclient.bridge.conn.TransactionRegistryTests;
 import com.opendbclient.bridge.export.CsvExportTests;
 import com.opendbclient.bridge.health.MetadataMetricsTests;
@@ -33,6 +34,8 @@ public final class BridgeTests {
         MetadataMetricsTests.register(runner);
         System.out.println("Transactions");
         TransactionRegistryTests.register(runner);
+        System.out.println("Connection ownership");
+        ConnectionRegistryOwnershipTests.register(runner);
 
         System.out.println();
         System.exit(runner.runAll());

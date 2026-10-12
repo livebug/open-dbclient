@@ -45,6 +45,7 @@ public final class ProtocolTests {
         runner.test("dispatches requests concurrently", ProtocolTests::concurrentDispatch);
         runner.test("counts failures detected on the reader thread", ProtocolTests::failuresAreCounted);
         runner.test("correlates progress events with their request", ProtocolTests::progressEvents);
+        runner.test("rejects requests without the required token", ProtocolTests::tokenRequired);
         runner.test("acknowledges shutdown and then terminates", ProtocolTests::shutdownTerminates);
     }
 
@@ -242,6 +243,31 @@ public final class ProtocolTests {
     }
 
     /**
+     * When the server is configured with a shared secret, every request must carry it.
+     *
+     * This is what protects a {@code --listen} server from being driven by anyone who can reach the
+     * port: without the token even {@code system.ping} is refused, and above all {@code
+     * system.shutdown} cannot be abused to kill the shared service.
+     */
+    private static void tokenRequired() throws IOException {
+        try (Harness harness = new Harness("s3cret")) {
+            harness.start();
+
+            harness.send(request("1", "system.ping"));
+            Map<String, Object> missing = harness.errorOf(harness.awaitResponse("1", 5_000));
+            Assert.equal("UNAUTHORIZED", missing.get("code"), "a request without a token is refused");
+
+            harness.send(request("2", "system.ping", "wrong"));
+            Map<String, Object> wrong = harness.errorOf(harness.awaitResponse("2", 5_000));
+            Assert.equal("UNAUTHORIZED", wrong.get("code"), "a wrong token is refused");
+
+            harness.send(request("3", "system.ping", "s3cret"));
+            Assert.equal(Boolean.TRUE, harness.awaitResponse("3", 5_000).get("ok"),
+                    "the correct token is accepted");
+        }
+    }
+
+    /**
      * Verifies shutdown reaches the point of process termination.
      *
      * The assertion is on the exit hook rather than on the server thread dying, because
@@ -270,7 +296,15 @@ public final class ProtocolTests {
     // ------------------------------------------------------------------
 
     private static String request(String id, String method) {
-        return Json.write(Json.obj("id", id, "method", method, "params", Json.obj()));
+        return request(id, method, null);
+    }
+
+    private static String request(String id, String method, String token) {
+        Map<String, Object> frame = Json.obj("id", id, "method", method, "params", Json.obj());
+        if (token != null) {
+            frame.put("token", token);
+        }
+        return Json.write(frame);
     }
 
     /**
@@ -293,9 +327,22 @@ public final class ProtocolTests {
         private final List<String> unparseable = new ArrayList<>();
 
         Harness() throws IOException {
+            this(null);
+        }
+
+        Harness(String requiredToken) throws IOException {
             capturedOutput = new PipedInputStream(serverOutputPipe, 64 * 1024);
             protocolOut = new PrintStream(serverOutputPipe, false, StandardCharsets.UTF_8);
-            server = new RpcServer(new BufferedReader(new PipedReader(clientInput)), protocolOut);
+            BufferedReader reader = new BufferedReader(new PipedReader(clientInput));
+            server = new RpcServer(reader, protocolOut,
+                    () -> {
+                        try {
+                            clientInput.close();
+                        } catch (IOException ignored) {
+                            // Unblocking is best-effort.
+                        }
+                    },
+                    new ServerMetrics(), null, requiredToken);
             SystemHandlers.register(server);
 
             // Never let a test terminate the test JVM by accident. Cases that care about

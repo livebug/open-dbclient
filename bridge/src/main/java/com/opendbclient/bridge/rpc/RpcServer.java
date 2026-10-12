@@ -3,6 +3,8 @@ package com.opendbclient.bridge.rpc;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -60,6 +62,12 @@ public final class RpcServer implements EventSink {
     private final ServerMetrics metrics;
     private final Map<String, Handler> handlers = new ConcurrentHashMap<>();
 
+    /**
+     * Shared secret every request must carry when non-null. Null means the server is open (stdio
+     * mode, or a trusted intranet). Comparison is constant-time to avoid leaking the secret.
+     */
+    private final String requiredToken;
+
     /** Requests dispatched over this connection, so closing it cancels only its own work. */
     private final Set<RequestContext> active = ConcurrentHashMap.newKeySet();
 
@@ -85,7 +93,7 @@ public final class RpcServer implements EventSink {
     }
 
     public RpcServer(BufferedReader reader, PrintStream writer, Runnable unblock) {
-        this(reader, writer, unblock, new ServerMetrics(), null);
+        this(reader, writer, unblock, new ServerMetrics(), null, null);
     }
 
     /**
@@ -97,10 +105,17 @@ public final class RpcServer implements EventSink {
      */
     public RpcServer(BufferedReader reader, PrintStream writer, Runnable unblock,
             ServerMetrics metrics, ExecutorService workers) {
+        this(reader, writer, unblock, metrics, workers, null);
+    }
+
+    /** Full constructor with a shared secret required on every request. */
+    public RpcServer(BufferedReader reader, PrintStream writer, Runnable unblock,
+            ServerMetrics metrics, ExecutorService workers, String requiredToken) {
         this.reader = reader;
         this.writer = writer;
         this.unblock = unblock;
         this.metrics = metrics;
+        this.requiredToken = requiredToken;
         this.ownsWorkers = workers == null;
         this.workers = workers != null
                 ? workers
@@ -210,6 +225,11 @@ public final class RpcServer implements EventSink {
         String method = Json.str(request, "method");
         if (method == null) {
             fail(id, RpcException.invalidParams("frame is missing 'method'"));
+            return;
+        }
+
+        if (requiredToken != null && !tokenMatches(requiredToken, Json.str(request, "token"))) {
+            fail(id, new RpcException(Protocol.ERROR_UNAUTHORIZED, "unauthorized"));
             return;
         }
 
@@ -366,6 +386,15 @@ public final class RpcServer implements EventSink {
             }
         }
         unblockReader();
+    }
+
+    private static boolean tokenMatches(String expected, String actual) {
+        if (actual == null) {
+            return false;
+        }
+        return MessageDigest.isEqual(
+                expected.getBytes(StandardCharsets.UTF_8),
+                actual.getBytes(StandardCharsets.UTF_8));
     }
 
     /**

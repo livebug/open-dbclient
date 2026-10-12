@@ -7,35 +7,43 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.PrintStream;
+import java.net.ServerSocket;
+import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import com.opendbclient.bridge.log.Log;
 import com.opendbclient.bridge.rpc.RpcServer;
+import com.opendbclient.bridge.rpc.ServerMetrics;
 
 /**
  * Entry point of the JDBC bridge process.
  *
- * <p>The bridge is a plain {@code java -jar} program with no third-party dependencies. It
- * speaks newline-delimited JSON over {@code stdin}/{@code stdout} and is driven entirely by
- * the VS Code extension.
+ * <p>The bridge is a plain {@code java -jar} program with no third-party dependencies. It speaks
+ * newline-delimited JSON, and runs in one of two modes:
+ *
+ * <ul>
+ *   <li>{@code --stdio} (default): one connection over {@code stdin}/{@code stdout}, driven by the
+ *       VS Code extension.</li>
+ *   <li>{@code --listen <port>}: a shared server. It accepts any number of TCP connections, all of
+ *       them served by one set of loaded drivers, one connection registry and one result cache, so
+ *       many clients can share a single JVM instead of each spawning its own.</li>
+ * </ul>
  *
  * <h2>Why the stream setup at the top of {@link #main} is not negotiable</h2>
  *
- * <p>Every JDBC driver is written on the assumption that it owns {@code System.out}; plenty
- * of them print banners, deprecation notices and debug output to it. Since {@code stdout} is
- * our protocol channel, a single stray {@code println} from a driver would inject a line
- * that the extension cannot parse, and depending on timing it could land in the middle of a
- * response. There is no way to recover from that after the fact, so the fix has to happen
- * before a driver class is ever loaded:
+ * <p>Every JDBC driver is written on the assumption that it owns {@code System.out}; plenty of them
+ * print banners, deprecation notices and debug output to it. In stdio mode {@code stdout} is the
+ * protocol channel, so a single stray {@code println} from a driver would inject a line that the
+ * client cannot parse. The fix has to happen before a driver class is ever loaded:
  *
  * <ol>
- *   <li>Bind an explicit UTF-8 stream to the real file descriptor {@code 1} - this becomes
- *       the protocol writer and is never handed to anything else.</li>
- *   <li>Repoint {@code System.out} at {@code stderr}. Driver chatter now lands in the log
- *       where it is useful instead of on the wire where it is fatal.</li>
- *   <li>Build the protocol reader over an explicit UTF-8 stream too, so non-ASCII data
- *       (CJK table names, for instance) survives regardless of the platform default
- *       encoding.</li>
+ *   <li>Bind an explicit UTF-8 stream to the real file descriptor {@code 1} - this becomes the
+ *       protocol writer and is never handed to anything else.</li>
+ *   <li>Repoint {@code System.out} at {@code stderr}. Driver chatter now lands in the log where it
+ *       is useful instead of on the wire where it is fatal.</li>
  * </ol>
  */
 public final class BridgeMain {
@@ -65,6 +73,16 @@ public final class BridgeMain {
                 System.getProperty("java.vendor"),
                 Runtime.getRuntime().maxMemory() / (1024 * 1024));
 
+        int listenPort = parseListenPort(args);
+        if (listenPort > 0) {
+            runListenServer(listenPort, diagnostics);
+        } else {
+            runStdio(protocolOut, diagnostics);
+        }
+    }
+
+    /** {@code --stdio} (default): one connection over stdin/stdout, owned by the caller. */
+    private static void runStdio(PrintStream protocolOut, PrintStream diagnostics) {
         FileInputStream rawIn = new FileInputStream(FileDescriptor.in);
         BufferedReader protocolIn = new BufferedReader(
                 new InputStreamReader(rawIn, StandardCharsets.UTF_8));
@@ -78,25 +96,9 @@ public final class BridgeMain {
                 // Best-effort; the explicit process exit is the real guarantee.
             }
         });
-        BridgeServices services = new BridgeServices(server);
-
-        // Release JDBC resources and flush the protocol stream however the process ends, whether it
-        // was asked to shut down or terminated abruptly.
-        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            Log.info("shutdown hook: closing connections and flushing streams");
-            try {
-                services.close();
-            } finally {
-                try {
-                    protocolOut.flush();
-                } catch (RuntimeException ignored) {
-                    // The stream may already be gone; nothing to do.
-                }
-                diagnostics.flush();
-            }
-        }, "bridge-shutdown"));
-
-        services.registerHandlers();
+        BridgeServices services = new BridgeServices(new ServerMetrics());
+        registerShutdownHook(services, null, protocolOut, diagnostics);
+        services.registerHandlers(server);
 
         try {
             server.serve();
@@ -110,6 +112,115 @@ public final class BridgeMain {
         // Kerberos refresh loops). Returning from main would leave the JVM waiting on them
         // forever, so exit explicitly once the protocol work is done.
         System.exit(0);
+    }
+
+    /** {@code --listen <port>}: a shared server serving any number of connections. */
+    private static void runListenServer(int port, PrintStream diagnostics) {
+        ServerMetrics metrics = new ServerMetrics();
+        BridgeServices services = new BridgeServices(metrics);
+        ExecutorService workers = newWorkerPool();
+        registerShutdownHook(services, workers, null, diagnostics);
+
+        try (ServerSocket serverSocket = new ServerSocket(port)) {
+            Log.info("bridge %s listening on port %d", BuildInfo.VERSION, port);
+            while (true) {
+                Socket socket = serverSocket.accept();
+                socket.setTcpNoDelay(true);
+                Thread connection = new Thread(
+                        () -> handleConnection(socket, services, metrics, workers),
+                        "bridge-connection");
+                connection.setDaemon(false);
+                connection.start();
+            }
+        } catch (IOException failure) {
+            Log.error("listener on port %d failed: %s", port, failure.getMessage());
+        } finally {
+            workers.shutdownNow();
+            services.close();
+        }
+    }
+
+    private static void handleConnection(
+            Socket socket, BridgeServices services, ServerMetrics metrics, ExecutorService workers) {
+        try (socket) {
+            BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
+            PrintStream writer = new PrintStream(socket.getOutputStream(), false, StandardCharsets.UTF_8);
+            RpcServer server = new RpcServer(reader, writer,
+                    () -> {
+                        try {
+                            socket.close();
+                        } catch (IOException ignored) {
+                            // Best-effort; serve() also checks its stopping flag.
+                        }
+                    },
+                    metrics, workers);
+            services.registerHandlers(server);
+            server.serve();
+        } catch (IOException failure) {
+            Log.debug("connection ended: %s", failure.getMessage());
+        }
+    }
+
+    private static ExecutorService newWorkerPool() {
+        AtomicInteger counter = new AtomicInteger();
+        return Executors.newFixedThreadPool(
+                Math.max(4, Runtime.getRuntime().availableProcessors()),
+                runnable -> {
+                    Thread thread = new Thread(runnable, "rpc-worker-" + counter.incrementAndGet());
+                    thread.setDaemon(true);
+                    return thread;
+                });
+    }
+
+    private static void registerShutdownHook(
+            BridgeServices services, ExecutorService workers, PrintStream protocolOut, PrintStream diagnostics) {
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            Log.info("shutdown hook: closing connections and flushing streams");
+            try {
+                services.close();
+            } finally {
+                if (workers != null) {
+                    workers.shutdownNow();
+                }
+                if (protocolOut != null) {
+                    try {
+                        protocolOut.flush();
+                    } catch (RuntimeException ignored) {
+                        // The stream may already be gone; nothing to do.
+                    }
+                }
+                diagnostics.flush();
+            }
+        }, "bridge-shutdown"));
+    }
+
+    private static int parseListenPort(String[] args) {
+        for (int i = 0; i < args.length; i++) {
+            switch (args[i]) {
+                case "--stdio" -> {
+                    return -1;
+                }
+                case "--listen", "-p", "--port" -> {
+                    if (i + 1 >= args.length) {
+                        Log.error("%s requires a port number", args[i]);
+                        System.exit(2);
+                    }
+                    try {
+                        int port = Integer.parseInt(args[++i]);
+                        if (port <= 0 || port > 65535) {
+                            throw new NumberFormatException();
+                        }
+                        return port;
+                    } catch (NumberFormatException invalid) {
+                        Log.error("invalid port: %s", args[i]);
+                        System.exit(2);
+                    }
+                }
+                default -> Log.warn("ignoring unknown argument: %s", args[i]);
+            }
+        }
+        return -1;
     }
 
     private static String firstNonBlank(String... candidates) {

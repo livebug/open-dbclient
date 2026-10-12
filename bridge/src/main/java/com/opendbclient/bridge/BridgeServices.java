@@ -14,6 +14,7 @@ import com.opendbclient.bridge.health.MetadataMetrics;
 import com.opendbclient.bridge.log.Log;
 import com.opendbclient.bridge.result.QueryRegistry;
 import com.opendbclient.bridge.rpc.RpcServer;
+import com.opendbclient.bridge.rpc.ServerMetrics;
 
 /**
  * Wires the bridge's subsystems together and registers their handlers.
@@ -21,22 +22,23 @@ import com.opendbclient.bridge.rpc.RpcServer;
  * <p>One place names every subsystem, which keeps {@code BridgeMain} about stream plumbing and makes
  * the process-wide lifecycle explicit: everything created here is released in {@link #close()}.
  *
- * <p>The server is supplied at construction rather than at registration because
- * {@link HealthService} needs it to report its own request counters, and threading it in later would
- * mean working around the constructor and leaving a half-initialised object reachable.
+ * <p>The process-wide request counters are shared through {@link ServerMetrics} rather than bound to
+ * any one connection, because in {@code --listen} mode many connections exist and the health panel
+ * must report the whole process. Handlers are registered per connection against that connection's
+ * {@link RpcServer}, so the same {@code BridgeServices} instance serves every one of them.
  */
 public final class BridgeServices implements AutoCloseable {
 
-    private final RpcServer server;
+    private final ServerMetrics metrics;
     private final DriverLoader driverLoader = new DriverLoader();
     private final ConnectionRegistry connections = new ConnectionRegistry(driverLoader);
     private final QueryRegistry queries = new QueryRegistry();
     private final MetadataMetrics metadata = new MetadataMetrics();
     private final HealthService health;
 
-    public BridgeServices(RpcServer server) {
-        this.server = server;
-        this.health = new HealthService(connections, queries, metadata, server);
+    public BridgeServices(ServerMetrics metrics) {
+        this.metrics = metrics;
+        this.health = new HealthService(connections, queries, metadata, metrics);
     }
 
     /** Driver loading and the driver classpath. */
@@ -64,8 +66,8 @@ public final class BridgeServices implements AutoCloseable {
         return health;
     }
 
-    /** Registers every RPC handler the bridge supports. */
-    public void registerHandlers() {
+    /** Registers every RPC handler against one connection's server. */
+    public void registerHandlers(RpcServer server) {
         SystemHandlers.register(server);
         HealthHandlers.registerConfiguration(server, this);
         DriverHandlers.register(server, this);
@@ -74,6 +76,7 @@ public final class BridgeServices implements AutoCloseable {
         QueryHandlers.register(server, this);
         ExportHandlers.register(server, this);
         HealthHandlers.register(server, this);
+        metrics.setHandlerCount(server.handlerCount());
     }
 
     /**

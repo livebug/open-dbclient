@@ -13,14 +13,13 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 
 import com.opendbclient.bridge.json.Json;
 import com.opendbclient.bridge.json.JsonException;
 import com.opendbclient.bridge.log.Log;
 
 /**
- * Newline-delimited JSON request dispatcher.
+ * Newline-delimited JSON request dispatcher, one instance per connection.
  *
  * <p>Two properties matter for correctness and are easy to get wrong:
  *
@@ -32,6 +31,12 @@ import com.opendbclient.bridge.log.Log;
  *       so every frame is written under one lock, otherwise interleaved partial lines
  *       would corrupt the stream beyond recovery.</li>
  * </ol>
+ *
+ * <p>Request counters and uptime are kept on a shared {@link ServerMetrics} so that in
+ * {@code --listen} mode the health panel reports the whole process, while the worker pool
+ * may be supplied by the caller so all connections share one. The per-connection
+ * {@code active} set remains local so that closing one connection cancels only the
+ * requests that came over it.
  */
 public final class RpcServer implements EventSink {
 
@@ -52,13 +57,15 @@ public final class RpcServer implements EventSink {
      */
     private final Runnable unblock;
 
+    private final ServerMetrics metrics;
     private final Map<String, Handler> handlers = new ConcurrentHashMap<>();
+
+    /** Requests dispatched over this connection, so closing it cancels only its own work. */
     private final Set<RequestContext> active = ConcurrentHashMap.newKeySet();
+
     private final ExecutorService workers;
+    private final boolean ownsWorkers;
     private final AtomicBoolean stopping = new AtomicBoolean(false);
-    private final AtomicLong requestsHandled = new AtomicLong();
-    private final AtomicLong requestFailures = new AtomicLong();
-    private final long startedAtNanos = System.nanoTime();
     private final Object writeLock = new Object();
 
     /**
@@ -78,12 +85,28 @@ public final class RpcServer implements EventSink {
     }
 
     public RpcServer(BufferedReader reader, PrintStream writer, Runnable unblock) {
+        this(reader, writer, unblock, new ServerMetrics(), null);
+    }
+
+    /**
+     * Full constructor: shared metrics and, optionally, a shared worker pool.
+     *
+     * <p>When {@code workers} is {@code null} the server creates its own pool and shuts it down in
+     * {@link #stop()}; when it is supplied, the caller owns the pool's lifetime and {@code stop()}
+     * leaves it running. {@code --listen} mode passes one shared pool.
+     */
+    public RpcServer(BufferedReader reader, PrintStream writer, Runnable unblock,
+            ServerMetrics metrics, ExecutorService workers) {
         this.reader = reader;
         this.writer = writer;
         this.unblock = unblock;
-        int parallelism = Math.max(4, Runtime.getRuntime().availableProcessors());
-        this.workers = Executors.newFixedThreadPool(parallelism, new WorkerThreadFactory());
-        Log.debug("rpc server using %d worker threads", parallelism);
+        this.metrics = metrics;
+        this.ownsWorkers = workers == null;
+        this.workers = workers != null
+                ? workers
+                : Executors.newFixedThreadPool(
+                        Math.max(4, Runtime.getRuntime().availableProcessors()), new WorkerThreadFactory());
+        Log.debug("rpc server using %s worker pool", ownsWorkers ? "its own" : "a shared");
     }
 
     /**
@@ -105,30 +128,29 @@ public final class RpcServer implements EventSink {
     }
 
     public long requestsHandled() {
-        return requestsHandled.get();
+        return metrics.requestsHandled();
     }
 
     public long requestFailures() {
-        return requestFailures.get();
+        return metrics.requestFailures();
     }
 
     public long uptimeMillis() {
-        return (System.nanoTime() - startedAtNanos) / 1_000_000L;
+        return metrics.uptimeMillis();
     }
 
     public int activeRequestCount() {
-        return active.size();
+        return metrics.activeRequestCount();
     }
 
     /**
-     * Reads frames until {@code stdin} reaches end-of-stream or a stop is requested.
+     * Reads frames until the stream reaches end-of-stream or a stop is requested.
      *
-     * <p>This method blocks. It returns only when the bridge should terminate, which
-     * happens when the extension host closes our stdin (the normal case: the window was
-     * closed or the extension was disabled).
+     * <p>This method blocks. It returns when the connection should be torn down: the client
+     * closed the stream, or {@code system.shutdown} was requested.
      */
     public void serve() {
-        Log.info("bridge ready; %d handlers registered", handlers.size());
+        Log.info("bridge connection ready; %d handlers registered", handlers.size());
         emit(Protocol.EVENT_READY, Json.obj(
                 "pid", ProcessHandle.current().pid(),
                 "javaVersion", System.getProperty("java.version"),
@@ -144,7 +166,7 @@ public final class RpcServer implements EventSink {
                 }
                 dispatch(line);
             }
-            Log.info("stdin reached end of stream; bridge stopping");
+            Log.info("stream reached end of stream; connection stopping");
         } catch (IOException failure) {
             if (!stopping.get()) {
                 Log.error("protocol read failed", failure);
@@ -198,21 +220,25 @@ public final class RpcServer implements EventSink {
         }
 
         Map<String, Object> params = Json.mapValue(request, "params");
-        RequestContext ctx = new RequestContext(id, this);
+        String tenantId = Json.str(request, "tenantId");
+        String sessionId = Json.str(request, "sessionId");
+        RequestContext ctx = new RequestContext(id, this, tenantId, sessionId);
         active.add(ctx);
+        metrics.addActive();
 
         try {
             workers.execute(() -> {
                 try {
                     Object result = handler.handle(params, ctx);
                     respondResult(id, result);
-                    requestsHandled.incrementAndGet();
+                    metrics.recordHandled();
                 } catch (RpcException known) {
                     fail(id, known);
                 } catch (Throwable failure) {
                     fail(id, RpcException.fromThrowable(failure));
                 } finally {
                     active.remove(ctx);
+                    metrics.removeActive();
                     if (ctx.isShutdownRequested()) {
                         // The response is already on the wire by this point, so it is now
                         // safe to drain and exit.
@@ -222,6 +248,7 @@ public final class RpcServer implements EventSink {
             });
         } catch (RejectedExecutionException shuttingDown) {
             active.remove(ctx);
+            metrics.removeActive();
             fail(id, new RpcException(Protocol.ERROR_INTERNAL, "the bridge is shutting down"));
         }
     }
@@ -270,7 +297,7 @@ public final class RpcServer implements EventSink {
      * latter made the health panel under-report.
      */
     private void fail(String id, RpcException failure) {
-        requestFailures.incrementAndGet();
+        metrics.recordFailure();
         respondError(id, failure);
     }
 
@@ -319,22 +346,24 @@ public final class RpcServer implements EventSink {
         if (!stopping.compareAndSet(false, true)) {
             return;
         }
-        Log.info("bridge stopping after %d requests (%d failures)",
-                requestsHandled.get(), requestFailures.get());
+        Log.info("connection stopping after %d requests (%d failures)",
+                metrics.requestsHandled(), metrics.requestFailures());
 
         for (RequestContext ctx : active) {
             ctx.markCancelled();
         }
 
-        workers.shutdown();
-        try {
-            if (!workers.awaitTermination(SHUTDOWN_GRACE_MILLIS, TimeUnit.MILLISECONDS)) {
-                Log.warn("forcing shutdown: %d handlers still running", active.size());
+        if (ownsWorkers) {
+            workers.shutdown();
+            try {
+                if (!workers.awaitTermination(SHUTDOWN_GRACE_MILLIS, TimeUnit.MILLISECONDS)) {
+                    Log.warn("forcing shutdown: %d handlers still running", active.size());
+                    workers.shutdownNow();
+                }
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
                 workers.shutdownNow();
             }
-        } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt();
-            workers.shutdownNow();
         }
         unblockReader();
     }

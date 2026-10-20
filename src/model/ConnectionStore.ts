@@ -144,8 +144,12 @@ export class ConnectionStore implements vscode.Disposable {
     // The keychain is the operating system's, and on a locked or slow one this read is the largest
     // single cost of connecting - which is invisible if it is simply awaited.
     log.debug(
-      `Read the stored password for '${id}' in ${Date.now() - startedAt} ms ` +
-        `(${password === undefined ? 'nothing stored' : 'found'})`,
+      t(
+        "Read the stored password for '{0}' in {1} ms ({2})",
+        id,
+        Date.now() - startedAt,
+        password === undefined ? t('nothing stored') : t('found'),
+      ),
     );
     return password;
   }
@@ -153,13 +157,13 @@ export class ConnectionStore implements vscode.Disposable {
   async setPassword(id: string, password: string): Promise<void> {
     const startedAt = Date.now();
     await this.context.secrets.store(SECRET_PREFIX + id, password);
-    log.debug(`Stored the password for '${id}' in ${Date.now() - startedAt} ms`);
+    log.debug(t("Stored the password for '{0}' in {1} ms", id, Date.now() - startedAt));
   }
 
   async deletePassword(id: string): Promise<void> {
     const startedAt = Date.now();
     await this.context.secrets.delete(SECRET_PREFIX + id);
-    log.debug(`Deleted the stored password for '${id}' in ${Date.now() - startedAt} ms`);
+    log.debug(t("Deleted the stored password for '{0}' in {1} ms", id, Date.now() - startedAt));
   }
 
   // ------------------------------------------------------------------
@@ -194,7 +198,7 @@ export class ConnectionStore implements vscode.Disposable {
     await writeFile(temporary, payload, 'utf8');
     await rename(temporary, file);
 
-    log.debug(`Wrote ${this.profiles.length} saved connection(s) in ${Date.now() - startedAt} ms`);
+    log.debug(t('Wrote {0} saved connection(s) in {1} ms', this.profiles.length, Date.now() - startedAt));
     this.emitter.fire();
   }
 

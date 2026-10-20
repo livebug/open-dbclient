@@ -109,9 +109,9 @@ export class JdbcBridge implements vscode.Disposable {
     if (this.startPromise) {
       // Worth saying out loud: a caller inside this branch pays for the JVM start another caller
       // began, which is the case that makes a first connect look slow for no visible reason.
-      log.debug('Waiting for the JDBC bridge to finish starting');
+      log.debug(t('Waiting for the JDBC bridge to finish starting'));
     } else {
-      log.debug('The JDBC bridge is not running; starting it');
+      log.debug(t('The JDBC bridge is not running; starting it'));
     }
     this.startPromise ??= this.start().finally(() => {
       this.startPromise = undefined;
@@ -181,7 +181,7 @@ export class JdbcBridge implements vscode.Disposable {
 
     this.teardownProcess();
     this.setState('stopped');
-    log.debug(`The JDBC bridge stopped in ${Date.now() - startedAt} ms`);
+    log.debug(t('The JDBC bridge stopped in {0} ms', Date.now() - startedAt));
   }
 
   dispose(): void {
@@ -262,13 +262,20 @@ export class JdbcBridge implements vscode.Disposable {
       this.setState('failed');
       throw error;
     }
-    log.debug(`The bridge announced itself ${Date.now() - spawnedAt} ms after the process was spawned`);
+    log.debug(
+      t('The bridge announced itself {0} ms after the process was spawned', Date.now() - spawnedAt),
+    );
 
     this.autoRestarts = 0;
     this.setState('ready');
     // The figure a first connect needs in order to be read correctly: this whole step happens before
     // the bridge sees the request, so none of it can appear in the bridge's own connect time.
-    log.info(`The JDBC bridge started in ${Date.now() - startedAt} ms (Java lookup + process start + handshake)`);
+    log.info(
+      t(
+        'The JDBC bridge started in {0} ms (Java lookup + process start + handshake)',
+        Date.now() - startedAt,
+      ),
+    );
   }
 
   private waitForReady(child: ChildProcessWithoutNullStreams, channel: RpcChannel): Promise<void> {

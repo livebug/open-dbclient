@@ -172,7 +172,9 @@ export class DatabaseTreeProvider
     const key = nodeKey(node);
     const cached = this.cache.get(key);
     if (cached) {
-      log.trace(`Expanding '${nodeLabel(node)}' from the cached listing (${cached.length} child/children)`);
+      log.trace(
+        t("Expanding '{0}' from the cached listing ({1} child/children)", nodeLabel(node), cached.length),
+      );
       return cached;
     }
 
@@ -193,7 +195,12 @@ export class DatabaseTreeProvider
     // One line per expansion, because expanding a connection is where the metadata reads happen and
     // "which level was slow" is otherwise only answerable from the health report's totals.
     log.debug(
-      `Expanded '${nodeLabel(node)}' in ${Date.now() - startedAt} ms (${children.length} child/children)`,
+      t(
+        "Expanded '{0}' in {1} ms ({2} child/children)",
+        nodeLabel(node),
+        Date.now() - startedAt,
+        children.length,
+      ),
     );
     this.cache.set(key, children);
     return children;

@@ -115,7 +115,12 @@ export class ConnectionService implements vscode.Disposable {
       return await this.openWithStoredCredentials(profile, options?.silent !== true);
     } catch (error) {
       if (error instanceof ConnectionFailedError && error.needsCredentials) {
-        log.debug(`'${profile.name}' has no usable stored password; asking for one before connecting`);
+        log.debug(
+          t(
+            "'{0}' has no usable stored password; asking for one before connecting",
+            profile.name,
+          ),
+        );
         const prompted = await this.promptForPassword(profile);
         if (prompted === undefined) {
           throw error;
@@ -130,8 +135,17 @@ export class ConnectionService implements vscode.Disposable {
   async open(profile: ConnectionProfile, password: string | undefined, report = true): Promise<ProbeResult> {
     const startedAt = Date.now();
     this.setState(profile.id, { status: 'connecting' });
-    log.info(`Connecting to '${profile.name}' (${profile.driverClassName})`);
-    log.debug(`Connection target: ${profile.driverClassName} -> ${profile.url}${profile.user ? ` as ${profile.user}` : ''}`);
+    log.info(t("Connecting to '{0}' ({1})", profile.name, profile.driverClassName));
+    log.debug(
+      profile.user
+        ? t(
+            'Connection target: {0} -> {1} as {2}',
+            profile.driverClassName,
+            profile.url,
+            profile.user,
+          )
+        : t('Connection target: {0} -> {1}', profile.driverClassName, profile.url),
+    );
     try {
       const result = await this.bridge.request<ProbeResult>(
         Methods.connectionOpen,
@@ -168,7 +182,10 @@ export class ConnectionService implements vscode.Disposable {
     } catch (error) {
       const message = describeError(error);
       this.setState(profile.id, { status: 'error', lastError: message });
-      log.error(error, `Could not connect to '${profile.name}' after ${Date.now() - startedAt} ms`);
+      log.error(
+        error,
+        t("Could not connect to '{0}' after {1} ms", profile.name, Date.now() - startedAt),
+      );
       if (report) {
         void vscode.window.showErrorMessage(
           t("Could not connect to '{0}': {1}", profile.name, message),
@@ -188,7 +205,7 @@ export class ConnectionService implements vscode.Disposable {
     password: string | undefined,
   ): Promise<ProbeResult> {
     const startedAt = Date.now();
-    log.info(`Testing the connection to '${profile.name}' (${profile.driverClassName})`);
+    log.info(t("Testing the connection to '{0}' ({1})", profile.name, profile.driverClassName));
     try {
       const result = await this.bridge.request<ProbeResult>(
         Methods.connectionTest,
@@ -198,23 +215,35 @@ export class ConnectionService implements vscode.Disposable {
         { timeoutMs: 60_000 },
       );
       log.info(
-        `Connection test for '${profile.name}' succeeded in ${result.connectMillis} ms ` +
-          `(${Date.now() - startedAt} ms end to end): ${result.capabilities.description}`,
+        t(
+          "Connection test for '{0}' succeeded in {1} ms ({2} ms end to end): {3}",
+          profile.name,
+          result.connectMillis,
+          Date.now() - startedAt,
+          result.capabilities.description,
+        ),
       );
       return result;
     } catch (error) {
-      log.warn(`Connection test for '${profile.name}' failed after ${Date.now() - startedAt} ms: ${describeError(error)}`);
+      log.warn(
+        t(
+          "Connection test for '{0}' failed after {1} ms: {2}",
+          profile.name,
+          Date.now() - startedAt,
+          describeError(error),
+        ),
+      );
       throw error;
     }
   }
 
   async disconnect(profileId: string): Promise<void> {
-    log.debug(`Closing connection '${profileId}'`);
+    log.debug(t("Closing connection '{0}'", profileId));
     try {
       await this.bridge.request(Methods.connectionClose, { connectionId: profileId });
     } catch (error) {
       // A failure here usually means the bridge is already gone, which has the same outcome.
-      log.debug(`Closing connection '${profileId}' failed: ${describeError(error)}`);
+      log.debug(t("Closing connection '{0}' failed: {1}", profileId, describeError(error)));
     } finally {
       this.setState(profileId, { status: 'disconnected' });
     }

@@ -89,7 +89,7 @@ export class DriverManager implements vscode.Disposable {
       .filter((name) => name.length > 0);
 
     log.debug(`Registering ${jarPaths.length} driver jar(s) and ${driverClassNames.length} explicit class name(s)`);
-    log.debug(`Scanning for driver jars took ${Date.now() - startedAt} ms`);
+    log.debug(t('Scanning for driver jars took {0} ms', Date.now() - startedAt));
 
     const result = await this.bridge.request<DriverRegistrationResult>(Methods.driverRegister, {
       jarPaths,

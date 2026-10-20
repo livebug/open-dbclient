@@ -390,6 +390,13 @@ export const ZH_CN: Record<string, string> = {
 
   // ---- 日志:桥与 Java ----
   'Stopping the JDBC bridge': '正在停止 JDBC 桥',
+  'Waiting for the JDBC bridge to finish starting': '等待 JDBC 桥完成启动',
+  'The JDBC bridge is not running; starting it': 'JDBC 桥未在运行,正在启动',
+  'The JDBC bridge stopped in {0} ms': 'JDBC 桥已停止(用时 {0} ms)',
+  'The bridge announced itself {0} ms after the process was spawned':
+    '桥在进程启动 {0} ms 后完成握手',
+  'The JDBC bridge started in {0} ms (Java lookup + process start + handshake)':
+    'JDBC 桥启动完成,用时 {0} ms(查找 Java + 启动进程 + 握手)',
   'Starting the JDBC bridge with {0}': '正在启动 JDBC 桥:{0}',
   'The JDBC bridge did not exit in time; terminating it': 'JDBC 桥没有及时退出,强制结束它',
   'The JDBC bridge process reported an error': 'JDBC 桥进程报告了错误',
@@ -436,6 +443,9 @@ export const ZH_CN: Record<string, string> = {
   "Could not load columns of '{0}' after {1} ms: {2}": '读取 {0} 的列失败(已尝试 {1} ms):{2}',
   'Loaded {0} column(s) of {1} in {2} ms': '已读取 {1} 的 {0} 列(用时 {2} ms)',
   "Could not expand '{0}' after {1} ms": '展开「{0}」失败(已尝试 {1} ms)',
+  "Expanding '{0}' from the cached listing ({1} child/children)":
+    '从缓存的列表展开「{0}」({1} 个子节点)',
+  "Expanded '{0}' in {1} ms ({2} child/children)": '已展开「{0}」,用时 {1} ms({2} 个子节点)',
 
   // ---- 日志:语句执行 ----
   "Finished in {0} ms on '{1}': {2}": '在「{1}」上完成,用时 {0} ms:{2}',
@@ -451,6 +461,7 @@ export const ZH_CN: Record<string, string> = {
 
   // ---- 日志:驱动 ----
   'Loaded {0} JDBC driver(s) in {1} ms': '已加载 {0} 个 JDBC 驱动(用时 {1} ms)',
+  'Scanning for driver jars took {0} ms': '扫描驱动 jar 用时 {0} ms',
   'Java lookup took {0} ms': '查找 Java 用时 {0} ms',
   'Driver not loaded ({0}) from {1}: {2}': '驱动未加载({0},来自 {1}):{2}',
   'an unknown class name': '类名未知',
@@ -476,6 +487,26 @@ export const ZH_CN: Record<string, string> = {
   "Updated connection '{0}'": '已更新连接「{0}」',
   "Removed connection '{0}'": '已删除连接「{0}」',
   "Connected '{0}' in {1} ms: {2}": '已连接「{0}」,用时 {1} ms:{2}',
+  "'{0}' has no usable stored password; asking for one before connecting":
+    '「{0}」没有可用的已存密码,先询问密码再连接',
+  "Connecting to '{0}' ({1})": '正在连接「{0}」({1})',
+  'Connection target: {0} -> {1}': '连接目标:{0} -> {1}',
+  'Connection target: {0} -> {1} as {2}': '连接目标:{0} -> {1}(用户 {2})',
+  "Could not connect to '{0}' after {1} ms": '连接「{0}」失败(已尝试 {1} ms)',
+  "Testing the connection to '{0}' ({1})": '正在测试与「{0}」的连接({1})',
+  "Connection test for '{0}' succeeded in {1} ms ({2} ms end to end): {3}":
+    '与「{0}」的连接测试成功,用时 {1} ms(端到端 {2} ms):{3}',
+  "Connection test for '{0}' failed after {1} ms: {2}":
+    '与「{0}」的连接测试失败(已尝试 {1} ms):{2}',
+  "Closing connection '{0}'": '正在关闭连接「{0}」',
+  "Closing connection '{0}' failed: {1}": '关闭连接「{0}」失败:{1}',
+  "Read the stored password for '{0}' in {1} ms ({2})":
+    '读取 {0} 的已存密码(用时 {1} ms,{2})',
+  'nothing stored': '没有存过',
+  'found': '已找到',
+  "Stored the password for '{0}' in {1} ms": '已保存 {0} 的密码(用时 {1} ms)',
+  "Deleted the stored password for '{0}' in {1} ms": '已删除 {0} 的已存密码(用时 {1} ms)',
+  'Wrote {0} saved connection(s) in {1} ms': '已写入 {0} 个保存的连接(用时 {1} ms)',
   "End-to-end connect for '{0}' took {1} ms, {2} ms of it outside the database":
     '端到端连接「{0}」用时 {1} ms,其中 {2} ms 花在数据库之外',
   " on '{0}'": '(连接「{0}」)',

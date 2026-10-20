@@ -28,7 +28,7 @@ public final class HealthHandlers {
         });
 
         server.register(Protocol.HEALTH_UNSUBSCRIBE, (params, ctx) -> {
-            services.health().unsubscribe();
+            services.health().unsubscribe(ctx.events());
             return Json.obj("subscribed", Boolean.FALSE);
         });
     }

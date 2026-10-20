@@ -26,6 +26,11 @@ export function registerConnectionCommands(dependencies: CommandDependencies): v
     register(Commands.copyName, (node) => copyName(asNode(node))),
     register(Commands.filterTree, () => filterTree(dependencies)),
     register(Commands.clearFilter, () => dependencies.tree.setFilter('')),
+    // Contributed in the manifest since 0.1.0 and never registered, so every one of these menu items
+    // and title-bar buttons reported "command not found" - including the driver folder link that is
+    // the whole first-run call to action in the empty view. The helpers at the bottom of this file are
+    // what the "no driver is loaded" dialog already calls for the same follow-up work.
+    register(Commands.refreshAll, () => dependencies.tree.refresh()),
     register(Commands.refreshNode, (node) => refreshNode(dependencies, asNode(node))),
     register(Commands.openDriverFolder, () => dependencies.drivers.openFolder()),
     register(Commands.addDriverJar, () => addDriverJar(dependencies)),

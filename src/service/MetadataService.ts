@@ -138,6 +138,8 @@ export class MetadataService {
     const params: Record<string, unknown> = { connectionId: request.connectionId };
     putIfPresent(params, 'catalog', request.catalog);
 
+    // Logged because this is one half of the completion prefetch, and the pair is the largest single
+    // cost a connection pays after it comes up. Without a line here, a slow prefetch is invisible.
     log.debug(t("Reading the schemas on {0} from the driver's metadata", connectionLabel(request)));
     const result = await this.request<{ schemas: string[] }>(Methods.metadataSchemas, params);
     return result.schemas ?? [];

@@ -193,7 +193,7 @@ public final class ExportHandlers {
             RequestContext ctx,
             boolean columnRemarks) throws SQLException, IOException {
 
-        ConnectionPool pool = services.connections().require(connectionId);
+        ConnectionPool pool = services.connections().require(connectionId, ctx.tenantId());
         String queryId = services.queries().nextQueryId();
         ActiveQuery active = new ActiveQuery(queryId, connectionId, ctx);
         services.queries().beginRunning(active);

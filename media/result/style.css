@@ -312,3 +312,70 @@ body {
 #detail[hidden] {
   display: none;
 }
+
+/* ------------------------------------------------- selection and editing */
+
+/*
+ * A selected range is filled rather than outlined: an outline per cell draws a grid of lines inside
+ * the selection, which reads as many selections instead of one.
+ */
+#grid tbody td.selected,
+#grid tbody td.selected:hover {
+  background: var(--vscode-editor-selectionBackground, rgba(38, 79, 120, 0.35));
+  outline: none;
+}
+
+/* An edited cell carries both its own mark and the row number's, so a row can be found again after
+ * scrolling without hunting for the cell that changed. */
+#grid tbody td.dirty {
+  background: var(--vscode-editor-findMatchHighlightBackground, rgba(234, 92, 0, 0.22));
+}
+
+#grid tbody td.dirty:not(.row-number) {
+  box-shadow: inset 2px 0 0 var(--vscode-editorWarning-foreground, #cca700);
+}
+
+#grid tbody td.row-number.dirty {
+  color: var(--vscode-editorWarning-foreground, #cca700);
+  font-weight: 600;
+}
+
+/*
+ * The cell an editor is sitting in. Sized to stay inside the row: the virtual scroller positions every
+ * row from a fixed height, so an editor that made its row taller would put the rendering and the
+ * scrollbar out of step with each other.
+ */
+#grid tbody td input.cell-editor {
+  width: 100%;
+  height: 18px;
+  padding: 0 4px;
+  font-family: inherit;
+  font-size: inherit;
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-focusBorder);
+  border-radius: 2px;
+  outline: none;
+}
+
+/* --------------------------------------------------------------- status */
+
+#status .edits {
+  color: var(--vscode-editorWarning-foreground, var(--vscode-foreground));
+  font-weight: 600;
+}
+
+/* A note from the host - a generated statement, or why one was not written - is worth reading once
+ * and then worth getting out of the way, so the whole line is a dismiss button. */
+#status .notice {
+  max-width: 60ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 6px;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 3px;
+  color: var(--vscode-foreground);
+  background: var(--vscode-editorWidget-background, transparent);
+  cursor: pointer;
+}

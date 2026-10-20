@@ -3,12 +3,79 @@
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/),格式参考
 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.7.0] - 2026-10-12
+
+本版同时合并了 `0.4.4` 线上未发布的修复(见下文 [0.4.4] 一节)。
+
+### 新增
+
+- **共享服务鉴权**：`--listen <port> --token <secret>` 开启共享密钥鉴权，每个请求帧必须携带
+  `token`，否则返回 `UNAUTHORIZED`（常量时间比较，防时序侧信道）。保护共享桥不被任意可达端口的
+  客户端驱动、也防 `system.shutdown` 被滥用。
+- **连接归属隔离**：连接记住打开它的租户（`connection.open` 的 `tenantId`），后续
+  `query.execute` / `metadata.*` / `connection.close` / 事务等操作必须携带同一 `tenantId`，否则
+  返回 `FORBIDDEN`。一个租户不能使用或关闭另一个租户的连接；`connection.list` 会带出 `tenantId`。
+- 桥版本 `0.3.0 -> 0.4.0`。
+
+## [0.6.0] - 2026-10-12
+
+### 新增
+
+- **桥支持共享服务模式 `--listen <port>`**:除默认的 `--stdio`（VS Code 单连接）外，桥现在可以
+  作为常驻 TCP 服务运行，接受任意多个连接，全部共享同一个 JVM、同一套已加载驱动、同一个连接池
+  与结果缓存。核心改动：
+  - 新增 `ServerMetrics`，把请求计数/活跃数/运行时长从单个 `RpcServer` 提到进程级共享；
+  - `HealthService` 去掉对 `RpcServer` 的依赖，健康推送改为**多订阅者**（每连接独立订阅/退订，
+    推送间隔取最紧的那个）；
+  - `RpcServer` 支持共享 worker 池，每连接只保留自己的 `active` 集合（断连只取消自己的请求）；
+  - 请求帧可携带可选 `tenantId`/`sessionId`，透传进 `RequestContext` 供审计/归属使用。
+- 桥版本 `0.2.0 -> 0.3.0`。
+
+## [0.5.0] - 2026-10-12
+
+### 新增
+
+- **桥新增事务 API**:`connection.beginTransaction` / `commitTransaction` / `rollbackTransaction` /
+  `transactionStatus`(事务绑定 connectionId、支持超时自动回滚、按
+  `DatabaseMetaData.supportsTransactions` 降级)。事务激活期间 `query.execute` 自动路由到被钉住的
+  连接。状态机抽在 `conn/TransactionRegistry`,含 10 个单元测试(用 Proxy 假连接驱动真实连接池)。
+
+### 变更
+
+- **自定义 SQL 的占位符集中到一处**:README 新增「自定义 SQL 里能用的占位符」,把原来分散在
+  `metadata.queries`、`ddl.queries`、`actions` 三节的说明合并,并先把**同一个 `${...}` 写法在两个地方
+  意思不同**讲清楚 —— 编辑器里的 `${...}` 是脚本变量(值由你填),设置里的模板 `${...}` 由插件按表填
+  (写错的名字不会被替换,而是让这条模板被跳过)。以后加占位符只改这一处
+
+### 新增(仅开发,不影响扩展行为)
+
+- `check-docs.mjs` 新增一项校验:**代码里存在的每个模板占位符都必须在 README 里出现**(12 个
+  动作 / DDL + 8 个元数据规则)。占位符是“能用但没人知道能用”的典型 —— 加在代码里、没写进文档,
+  等于白加;同时这个检查不再把表格首列的 `${...}` 误当成设置名
+
+### 修复
+
+- **`system.shutdown` 后桥进程卡死**:`unblockReader()` 调 `BufferedReader.close()` 会与阻塞在
+  `readLine()` 的线程在 `StreamDecoder` 锁上死锁(生产走 `FileInputStream` 触发,测试走 `PipedReader`
+  掩盖了它)。现在关底层原始流,并加关停钩子优雅关闭连接/驱动;桥在 ack 后约 0.4s 内退出。
+- **PostgreSQL/openGauss 上“目录(catalog)”这一层展开出来是错的**。树原来只要 `getCatalogs()` 返回
+  多于一个名字就显示这一层,而 pgjdbc 会列出**整个集群的数据库**(含 `template1` 这种连不上的),
+  之后又**完全忽略** catalog 参数:实测(pgjdbc 42.7.4,连在 `postgres` 上)`getTables("otherdb")`
+  返回的仍然是 `postgres` 库的表 —— 于是同一个库的表会挂着别的库的名字出现在树下,是**错的内容**
+  而不是少一个功能。现在改由驱动自己回答:只有 `supportsCatalogsInDataManipulation()` 为真
+  (MySQL/MariaDB/SQL Server)时才显示这一层,否则直接从模式开始。仍然是能力探测,不是方言分支;
+  判定逻辑在 `src/tree/catalogLevel.ts`,连注释里都记着实测数据
+- 随之删掉了随包的 `postgres-catalogs` / `opengauss-catalogs` 示例 —— 那两个库上这一层本来就不显示了,
+  留着只会教错方向
+
 ## [0.4.4] - 2026-09-30
 
 一个补丁版:**0.4.0 在 PostgreSQL / openGauss 上会显示一层假的“目录”节点**,已由驱动自己的能力判定修掉;
 另外把自定义 SQL 能用的占位符集中成文档并加了防漂校验。
 
-> 0.4.1 ~ 0.4.3 只构建过本地测试包、没有发布,内容都已并入本节。
+> 0.4.1 ~ 0.4.4 只构建过本地测试包、没有发布,并在合并 `origin/main` 时进入 0.7.0 的构建。
+> 占位符文档与 `check-docs.mjs` 的防漂校验、catalog 层修复在两条线上是同一份改动,合并后统一记在
+> [0.5.0] 一节。
 
 ### 变更
 
@@ -20,16 +87,6 @@
   以及“没有列”也会被记住
 - **README 新增「展开一个连接会发生哪些读取」**:一张表说清点连接与展开各层分别读什么、驱动被调几次、
   哪一步能换成自己的 SQL,以及耗时在日志和健康报告里各自看哪一节
-- **自定义 SQL 的占位符集中到一处**:README 新增「自定义 SQL 里能用的占位符」,把原来分散在
-  `metadata.queries`、`ddl.queries`、`actions` 三节的说明合并,并先把**同一个 `${...}` 写法在两个地方
-  意思不同**讲清楚 —— 编辑器里的 `${...}` 是脚本变量(值由你填),设置里的模板 `${...}` 由插件按表填
-  (写错的名字不会被替换,而是让这条模板被跳过)。以后加占位符只改这一处
-
-### 新增(仅开发,不影响扩展行为)
-
-- `check-docs.mjs` 新增一项校验:**代码里存在的每个模板占位符都必须在 README 里出现**(12 个
-  动作 / DDL + 8 个元数据规则)。占位符是“能用但没人知道能用”的典型 —— 加在代码里、没写进文档,
-  等于白加;同时这个检查不再把表格首列的 `${...}` 误当成设置名
 
 ### 修复
 
@@ -69,15 +126,6 @@
   随 `DatabaseCapabilities` 一起返回),规则照旧能填出值
 - **用不上就不问**:驱动报 catalog 参数无意义时,`getCatalogs()` **不再被调用** —— 那个答案本来就会被
   丢掉,而每次往返都是慢库上的真实开销。副作用已写进 README:这类驱动上 `catalogs` 规则没有任何作用
-- **PostgreSQL/openGauss 上“目录(catalog)”这一层展开出来是错的**。树原来只要 `getCatalogs()` 返回
-  多于一个名字就显示这一层,而 pgjdbc 会列出**整个集群的数据库**(含 `template1` 这种连不上的),
-  之后又**完全忽略** catalog 参数:实测(pgjdbc 42.7.4,连在 `postgres` 上)`getTables("otherdb")`
-  返回的仍然是 `postgres` 库的表 —— 于是同一个库的表会挂着别的库的名字出现在树下,是**错的内容**
-  而不是少一个功能。现在改由驱动自己回答:只有 `supportsCatalogsInDataManipulation()` 为真
-  (MySQL/MariaDB/SQL Server)时才显示这一层,否则直接从模式开始。仍然是能力探测,不是方言分支;
-  判定逻辑在 `src/tree/catalogLevel.ts`,连注释里都记着实测数据
-- 随之删掉了随包的 `postgres-catalogs` / `opengauss-catalogs` 示例 —— 那两个库上这一层本来就不显示了,
-  留着只会教错方向
 
 ## [0.4.0] - 2026-09-30
 

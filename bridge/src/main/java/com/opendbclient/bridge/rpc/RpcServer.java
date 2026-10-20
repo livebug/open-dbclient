@@ -3,6 +3,8 @@ package com.opendbclient.bridge.rpc;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -13,14 +15,13 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 
 import com.opendbclient.bridge.json.Json;
 import com.opendbclient.bridge.json.JsonException;
 import com.opendbclient.bridge.log.Log;
 
 /**
- * Newline-delimited JSON request dispatcher.
+ * Newline-delimited JSON request dispatcher, one instance per connection.
  *
  * <p>Two properties matter for correctness and are easy to get wrong:
  *
@@ -32,6 +33,12 @@ import com.opendbclient.bridge.log.Log;
  *       so every frame is written under one lock, otherwise interleaved partial lines
  *       would corrupt the stream beyond recovery.</li>
  * </ol>
+ *
+ * <p>Request counters and uptime are kept on a shared {@link ServerMetrics} so that in
+ * {@code --listen} mode the health panel reports the whole process, while the worker pool
+ * may be supplied by the caller so all connections share one. The per-connection
+ * {@code active} set remains local so that closing one connection cancels only the
+ * requests that came over it.
  */
 public final class RpcServer implements EventSink {
 
@@ -40,13 +47,33 @@ public final class RpcServer implements EventSink {
 
     private final BufferedReader reader;
     private final PrintStream writer;
+
+    /**
+     * How to unblock a thread parked in {@link #serve()}.
+     *
+     * <p>Closing a {@link BufferedReader} whose {@code readLine()} is blocked does not reliably
+     * wake it, and for a {@code FileInputStream}-backed reader it deadlocks: {@code close()} needs
+     * the {@code StreamDecoder} lock that the blocked native read holds. The caller therefore
+     * supplies a way to close the <em>raw</em> stream, whose close unblocks the read without
+     * touching the reader's own lock.
+     */
+    private final Runnable unblock;
+
+    private final ServerMetrics metrics;
     private final Map<String, Handler> handlers = new ConcurrentHashMap<>();
+
+    /**
+     * Shared secret every request must carry when non-null. Null means the server is open (stdio
+     * mode, or a trusted intranet). Comparison is constant-time to avoid leaking the secret.
+     */
+    private final String requiredToken;
+
+    /** Requests dispatched over this connection, so closing it cancels only its own work. */
     private final Set<RequestContext> active = ConcurrentHashMap.newKeySet();
+
     private final ExecutorService workers;
+    private final boolean ownsWorkers;
     private final AtomicBoolean stopping = new AtomicBoolean(false);
-    private final AtomicLong requestsHandled = new AtomicLong();
-    private final AtomicLong requestFailures = new AtomicLong();
-    private final long startedAtNanos = System.nanoTime();
     private final Object writeLock = new Object();
 
     /**
@@ -56,11 +83,45 @@ public final class RpcServer implements EventSink {
     private volatile Runnable exitHook = () -> System.exit(0);
 
     public RpcServer(BufferedReader reader, PrintStream writer) {
+        this(reader, writer, () -> {
+            try {
+                reader.close();
+            } catch (IOException ignored) {
+                // Closing stdin failing is not actionable; serve() also checks `stopping`.
+            }
+        });
+    }
+
+    public RpcServer(BufferedReader reader, PrintStream writer, Runnable unblock) {
+        this(reader, writer, unblock, new ServerMetrics(), null, null);
+    }
+
+    /**
+     * Full constructor: shared metrics and, optionally, a shared worker pool.
+     *
+     * <p>When {@code workers} is {@code null} the server creates its own pool and shuts it down in
+     * {@link #stop()}; when it is supplied, the caller owns the pool's lifetime and {@code stop()}
+     * leaves it running. {@code --listen} mode passes one shared pool.
+     */
+    public RpcServer(BufferedReader reader, PrintStream writer, Runnable unblock,
+            ServerMetrics metrics, ExecutorService workers) {
+        this(reader, writer, unblock, metrics, workers, null);
+    }
+
+    /** Full constructor with a shared secret required on every request. */
+    public RpcServer(BufferedReader reader, PrintStream writer, Runnable unblock,
+            ServerMetrics metrics, ExecutorService workers, String requiredToken) {
         this.reader = reader;
         this.writer = writer;
-        int parallelism = Math.max(4, Runtime.getRuntime().availableProcessors());
-        this.workers = Executors.newFixedThreadPool(parallelism, new WorkerThreadFactory());
-        Log.debug("rpc server using %d worker threads", parallelism);
+        this.unblock = unblock;
+        this.metrics = metrics;
+        this.requiredToken = requiredToken;
+        this.ownsWorkers = workers == null;
+        this.workers = workers != null
+                ? workers
+                : Executors.newFixedThreadPool(
+                        Math.max(4, Runtime.getRuntime().availableProcessors()), new WorkerThreadFactory());
+        Log.debug("rpc server using %s worker pool", ownsWorkers ? "its own" : "a shared");
     }
 
     /**
@@ -82,30 +143,29 @@ public final class RpcServer implements EventSink {
     }
 
     public long requestsHandled() {
-        return requestsHandled.get();
+        return metrics.requestsHandled();
     }
 
     public long requestFailures() {
-        return requestFailures.get();
+        return metrics.requestFailures();
     }
 
     public long uptimeMillis() {
-        return (System.nanoTime() - startedAtNanos) / 1_000_000L;
+        return metrics.uptimeMillis();
     }
 
     public int activeRequestCount() {
-        return active.size();
+        return metrics.activeRequestCount();
     }
 
     /**
-     * Reads frames until {@code stdin} reaches end-of-stream or a stop is requested.
+     * Reads frames until the stream reaches end-of-stream or a stop is requested.
      *
-     * <p>This method blocks. It returns only when the bridge should terminate, which
-     * happens when the extension host closes our stdin (the normal case: the window was
-     * closed or the extension was disabled).
+     * <p>This method blocks. It returns when the connection should be torn down: the client
+     * closed the stream, or {@code system.shutdown} was requested.
      */
     public void serve() {
-        Log.info("bridge ready; %d handlers registered", handlers.size());
+        Log.info("bridge connection ready; %d handlers registered", handlers.size());
         emit(Protocol.EVENT_READY, Json.obj(
                 "pid", ProcessHandle.current().pid(),
                 "javaVersion", System.getProperty("java.version"),
@@ -121,7 +181,7 @@ public final class RpcServer implements EventSink {
                 }
                 dispatch(line);
             }
-            Log.info("stdin reached end of stream; bridge stopping");
+            Log.info("stream reached end of stream; connection stopping");
         } catch (IOException failure) {
             if (!stopping.get()) {
                 Log.error("protocol read failed", failure);
@@ -168,6 +228,11 @@ public final class RpcServer implements EventSink {
             return;
         }
 
+        if (requiredToken != null && !tokenMatches(requiredToken, Json.str(request, "token"))) {
+            fail(id, new RpcException(Protocol.ERROR_UNAUTHORIZED, "unauthorized"));
+            return;
+        }
+
         Handler handler = handlers.get(method);
         if (handler == null) {
             fail(id, RpcException.unknownMethod(method));
@@ -175,21 +240,33 @@ public final class RpcServer implements EventSink {
         }
 
         Map<String, Object> params = Json.mapValue(request, "params");
-        RequestContext ctx = new RequestContext(id, this);
+        String tenantId = Json.str(request, "tenantId");
+        String sessionId = Json.str(request, "sessionId");
+        RequestContext ctx = new RequestContext(id, this, tenantId, sessionId);
         active.add(ctx);
+        metrics.addActive();
 
         try {
             workers.execute(() -> {
+                // Timed around the handler rather than around the frame, so the number is the work
+                // the request asked for and not the time it spent queued behind another one. Pairing
+                // it with the caller's own measurement is what separates "the bridge was busy" from
+                // "the database was slow".
+                long startNanos = System.nanoTime();
                 try {
                     Object result = handler.handle(params, ctx);
                     respondResult(id, result);
-                    requestsHandled.incrementAndGet();
+                    metrics.recordHandled();
+                    Log.debug("handled %s in %d ms", method, elapsedMillis(startNanos));
                 } catch (RpcException known) {
                     fail(id, known);
+                    Log.debug("%s failed after %d ms", method, elapsedMillis(startNanos));
                 } catch (Throwable failure) {
                     fail(id, RpcException.fromThrowable(failure));
+                    Log.debug("%s failed after %d ms", method, elapsedMillis(startNanos));
                 } finally {
                     active.remove(ctx);
+                    metrics.removeActive();
                     if (ctx.isShutdownRequested()) {
                         // The response is already on the wire by this point, so it is now
                         // safe to drain and exit.
@@ -199,8 +276,14 @@ public final class RpcServer implements EventSink {
             });
         } catch (RejectedExecutionException shuttingDown) {
             active.remove(ctx);
+            metrics.removeActive();
             fail(id, new RpcException(Protocol.ERROR_INTERNAL, "the bridge is shutting down"));
         }
+    }
+
+    /** Milliseconds since a {@code System.nanoTime()} reading. */
+    private static long elapsedMillis(long startNanos) {
+        return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos);
     }
 
     /**
@@ -247,7 +330,7 @@ public final class RpcServer implements EventSink {
      * latter made the health panel under-report.
      */
     private void fail(String id, RpcException failure) {
-        requestFailures.incrementAndGet();
+        metrics.recordFailure();
         respondError(id, failure);
     }
 
@@ -286,9 +369,9 @@ public final class RpcServer implements EventSink {
 
     private void unblockReader() {
         try {
-            reader.close();
-        } catch (IOException ignored) {
-            // Closing stdin failing is not actionable; serve() also checks `stopping`.
+            unblock.run();
+        } catch (RuntimeException ignored) {
+            // Unblocking is best-effort; the explicit exit in terminate() is the guarantee.
         }
     }
 
@@ -296,24 +379,35 @@ public final class RpcServer implements EventSink {
         if (!stopping.compareAndSet(false, true)) {
             return;
         }
-        Log.info("bridge stopping after %d requests (%d failures)",
-                requestsHandled.get(), requestFailures.get());
+        Log.info("connection stopping after %d requests (%d failures)",
+                metrics.requestsHandled(), metrics.requestFailures());
 
         for (RequestContext ctx : active) {
             ctx.markCancelled();
         }
 
-        workers.shutdown();
-        try {
-            if (!workers.awaitTermination(SHUTDOWN_GRACE_MILLIS, TimeUnit.MILLISECONDS)) {
-                Log.warn("forcing shutdown: %d handlers still running", active.size());
+        if (ownsWorkers) {
+            workers.shutdown();
+            try {
+                if (!workers.awaitTermination(SHUTDOWN_GRACE_MILLIS, TimeUnit.MILLISECONDS)) {
+                    Log.warn("forcing shutdown: %d handlers still running", active.size());
+                    workers.shutdownNow();
+                }
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
                 workers.shutdownNow();
             }
-        } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt();
-            workers.shutdownNow();
         }
         unblockReader();
+    }
+
+    private static boolean tokenMatches(String expected, String actual) {
+        if (actual == null) {
+            return false;
+        }
+        return MessageDigest.isEqual(
+                expected.getBytes(StandardCharsets.UTF_8),
+                actual.getBytes(StandardCharsets.UTF_8));
     }
 
     /**

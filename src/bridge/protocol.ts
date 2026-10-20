@@ -24,6 +24,10 @@ export const Methods = {
   connectionTest: 'connection.test',
   connectionClose: 'connection.close',
   connectionList: 'connection.list',
+  connectionBeginTransaction: 'connection.beginTransaction',
+  connectionCommitTransaction: 'connection.commitTransaction',
+  connectionRollbackTransaction: 'connection.rollbackTransaction',
+  connectionTransactionStatus: 'connection.transactionStatus',
 
   // metadata
   metadataCapabilities: 'metadata.capabilities',
@@ -69,6 +73,9 @@ export const ErrorCodes = {
   driverLoadFailed: 'DRIVER_LOAD_FAILED',
   connectionFailed: 'CONNECTION_FAILED',
   connectionNotFound: 'CONNECTION_NOT_FOUND',
+  transactionActive: 'TRANSACTION_ACTIVE',
+  transactionNotFound: 'TRANSACTION_NOT_FOUND',
+  transactionTimeout: 'TRANSACTION_TIMEOUT',
   sql: 'SQL_ERROR',
   queryCancelled: 'QUERY_CANCELLED',
   queryNotFound: 'QUERY_NOT_FOUND',

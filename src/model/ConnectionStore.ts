@@ -138,16 +138,28 @@ export class ConnectionStore implements vscode.Disposable {
   // credentials
   // ------------------------------------------------------------------
 
-  getPassword(id: string): Thenable<string | undefined> {
-    return this.context.secrets.get(SECRET_PREFIX + id);
+  async getPassword(id: string): Promise<string | undefined> {
+    const startedAt = Date.now();
+    const password = await this.context.secrets.get(SECRET_PREFIX + id);
+    // The keychain is the operating system's, and on a locked or slow one this read is the largest
+    // single cost of connecting - which is invisible if it is simply awaited.
+    log.debug(
+      `Read the stored password for '${id}' in ${Date.now() - startedAt} ms ` +
+        `(${password === undefined ? 'nothing stored' : 'found'})`,
+    );
+    return password;
   }
 
-  setPassword(id: string, password: string): Thenable<void> {
-    return this.context.secrets.store(SECRET_PREFIX + id, password);
+  async setPassword(id: string, password: string): Promise<void> {
+    const startedAt = Date.now();
+    await this.context.secrets.store(SECRET_PREFIX + id, password);
+    log.debug(`Stored the password for '${id}' in ${Date.now() - startedAt} ms`);
   }
 
-  deletePassword(id: string): Thenable<void> {
-    return this.context.secrets.delete(SECRET_PREFIX + id);
+  async deletePassword(id: string): Promise<void> {
+    const startedAt = Date.now();
+    await this.context.secrets.delete(SECRET_PREFIX + id);
+    log.debug(`Deleted the stored password for '${id}' in ${Date.now() - startedAt} ms`);
   }
 
   // ------------------------------------------------------------------
@@ -166,6 +178,7 @@ export class ConnectionStore implements vscode.Disposable {
    * window between truncate and write is real.
    */
   private async persist(): Promise<void> {
+    const startedAt = Date.now();
     const file = this.storagePath();
     const temporary = `${file}.tmp`;
     const payload = JSON.stringify(
@@ -181,6 +194,7 @@ export class ConnectionStore implements vscode.Disposable {
     await writeFile(temporary, payload, 'utf8');
     await rename(temporary, file);
 
+    log.debug(`Wrote ${this.profiles.length} saved connection(s) in ${Date.now() - startedAt} ms`);
     this.emitter.fire();
   }
 

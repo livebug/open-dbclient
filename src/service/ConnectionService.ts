@@ -115,6 +115,7 @@ export class ConnectionService implements vscode.Disposable {
       return await this.openWithStoredCredentials(profile, options?.silent !== true);
     } catch (error) {
       if (error instanceof ConnectionFailedError && error.needsCredentials) {
+        log.debug(`'${profile.name}' has no usable stored password; asking for one before connecting`);
         const prompted = await this.promptForPassword(profile);
         if (prompted === undefined) {
           throw error;
@@ -127,12 +128,16 @@ export class ConnectionService implements vscode.Disposable {
 
   /** Connects using a password supplied by the caller, bypassing stored credentials. */
   async open(profile: ConnectionProfile, password: string | undefined, report = true): Promise<ProbeResult> {
+    const startedAt = Date.now();
     this.setState(profile.id, { status: 'connecting' });
+    log.info(`Connecting to '${profile.name}' (${profile.driverClassName})`);
+    log.debug(`Connection target: ${profile.driverClassName} -> ${profile.url}${profile.user ? ` as ${profile.user}` : ''}`);
     try {
       const result = await this.bridge.request<ProbeResult>(
         Methods.connectionOpen,
         this.toParams(profile, password),
       );
+      const elapsedMillis = Date.now() - startedAt;
       this.setState(profile.id, {
         status: 'connected',
         capabilities: result.capabilities,
@@ -147,10 +152,23 @@ export class ConnectionService implements vscode.Disposable {
           result.capabilities.description,
         ),
       );
+      // The bridge's figure covers the database work only - borrowing or creating a connection plus the
+      // capability probe. The difference is what the extension, the JVM and the pipe added, which on a
+      // bridge that has to be started is the whole startup cost. Logged separately so the two can be
+      // told apart instead of being read as one slow database.
+      log.debug(
+        t(
+          "End-to-end connect for '{0}' took {1} ms, {2} ms of it outside the database",
+          profile.name,
+          elapsedMillis,
+          Math.max(0, elapsedMillis - result.connectMillis),
+        ),
+      );
       return result;
     } catch (error) {
       const message = describeError(error);
       this.setState(profile.id, { status: 'error', lastError: message });
+      log.error(error, `Could not connect to '${profile.name}' after ${Date.now() - startedAt} ms`);
       if (report) {
         void vscode.window.showErrorMessage(
           t("Could not connect to '{0}': {1}", profile.name, message),
@@ -169,16 +187,29 @@ export class ConnectionService implements vscode.Disposable {
     profile: ConnectionProfile,
     password: string | undefined,
   ): Promise<ProbeResult> {
-    return this.bridge.request<ProbeResult>(
-      Methods.connectionTest,
-      this.toParams(profile, password),
-      // Testing is interactive and a wrong host can hang for a long time; fail before the user
-      // gives up and retries.
-      { timeoutMs: 60_000 },
-    );
+    const startedAt = Date.now();
+    log.info(`Testing the connection to '${profile.name}' (${profile.driverClassName})`);
+    try {
+      const result = await this.bridge.request<ProbeResult>(
+        Methods.connectionTest,
+        this.toParams(profile, password),
+        // Testing is interactive and a wrong host can hang for a long time; fail before the user
+        // gives up and retries.
+        { timeoutMs: 60_000 },
+      );
+      log.info(
+        `Connection test for '${profile.name}' succeeded in ${result.connectMillis} ms ` +
+          `(${Date.now() - startedAt} ms end to end): ${result.capabilities.description}`,
+      );
+      return result;
+    } catch (error) {
+      log.warn(`Connection test for '${profile.name}' failed after ${Date.now() - startedAt} ms: ${describeError(error)}`);
+      throw error;
+    }
   }
 
   async disconnect(profileId: string): Promise<void> {
+    log.debug(`Closing connection '${profileId}'`);
     try {
       await this.bridge.request(Methods.connectionClose, { connectionId: profileId });
     } catch (error) {
@@ -233,6 +264,11 @@ export class ConnectionService implements vscode.Disposable {
   ): Promise<ProbeResult> {
     const password = profile.savePassword ? await this.store.getPassword(profile.id) : undefined;
     const requiresPassword = password === undefined && profile.savePassword;
+    log.debug(
+      profile.savePassword
+        ? `Stored-password lookup for '${profile.name}': ${password === undefined ? 'nothing stored' : 'found'}`
+        : `'${profile.name}' does not keep a stored password; connecting without one`,
+    );
 
     if (requiresPassword) {
       // The bridge will reject this, but prompting first avoids a pointless round trip and a

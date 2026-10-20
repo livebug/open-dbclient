@@ -8,5 +8,10 @@
     "module": "ESNext",
     "allowImportingTsExtensions": true
   },
-  "include": ["**/*.ts", "../src/webview/messages.ts"]
+  "include": ["**/*.ts", "../src/webview/messages.ts"],
+  // Without this the `exclude` inherited from the root config still says `media`, and TypeScript
+  // resolves that relative path against the config it came from - so it becomes this very directory
+  // and every webview entry point is dropped from the program. The check then passes while checking
+  // nothing, which is how two real type errors lived here unnoticed.
+  "exclude": []
 }

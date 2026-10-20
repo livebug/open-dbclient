@@ -42,26 +42,26 @@ public final class MetadataHandlers {
     public static void register(RpcServer server, BridgeServices services) {
         server.register(Protocol.METADATA_CAPABILITIES, (params, ctx) -> {
             String connectionId = Json.requireStr(params, "connectionId");
-            return services.connections().capabilities(connectionId).toPayload();
+            return services.connections().capabilities(connectionId, ctx.tenantId()).toPayload();
         });
 
         server.register(Protocol.METADATA_CATALOGS, (params, ctx) -> {
             String connectionId = Json.requireStr(params, "connectionId");
-            return withConnection(services, connectionId, "catalogs", "", connection -> Json.obj(
+            return withConnection(services, connectionId, ctx.tenantId(), "catalogs", "", connection -> Json.obj(
                     "catalogs", new ArrayList<Object>(MetadataProvider.catalogs(connection))));
         });
 
         server.register(Protocol.METADATA_SCHEMAS, (params, ctx) -> {
             String connectionId = Json.requireStr(params, "connectionId");
             String catalog = optional(params, "catalog");
-            return withConnection(services, connectionId, "schemas", catalog, connection -> Json.obj(
+            return withConnection(services, connectionId, ctx.tenantId(), "schemas", catalog, connection -> Json.obj(
                     "catalog", catalog,
                     "schemas", new ArrayList<Object>(MetadataProvider.schemas(connection, catalog))));
         });
 
         server.register(Protocol.METADATA_TABLE_TYPES, (params, ctx) -> {
             String connectionId = Json.requireStr(params, "connectionId");
-            return withConnection(services, connectionId, "tableTypes", "", connection -> Json.obj(
+            return withConnection(services, connectionId, ctx.tenantId(), "tableTypes", "", connection -> Json.obj(
                     "tableTypes", new ArrayList<Object>(MetadataProvider.tableTypes(connection))));
         });
 
@@ -80,7 +80,7 @@ public final class MetadataHandlers {
                     ? null
                     : requestedTypes.toArray(String[]::new);
 
-            return withConnection(services, connectionId, "tables", qualified(catalog, schema), connection -> {
+            return withConnection(services, connectionId, ctx.tenantId(), "tables", qualified(catalog, schema), connection -> {
                 List<TableInfo> tables = MetadataProvider.tables(
                         connection, catalog, schema, namePattern, types);
                 List<Object> payloads = new ArrayList<>(tables.size());
@@ -103,7 +103,7 @@ public final class MetadataHandlers {
 
             // The object goes in the subject: "columns" taking twelve seconds is only actionable once it
             // says which table's columns.
-            return withConnection(services, connectionId, "columns", qualified(schema, table), connection -> {
+            return withConnection(services, connectionId, ctx.tenantId(), "columns", qualified(schema, table), connection -> {
                 List<ColumnInfo> columns = MetadataProvider.columns(connection, catalog, schema, table);
                 List<Object> payloads = new ArrayList<>(columns.size());
                 for (ColumnInfo column : columns) {
@@ -119,7 +119,7 @@ public final class MetadataHandlers {
             String schema = optional(params, "schema");
             String table = Json.requireStr(params, "table");
 
-            return withConnection(services, connectionId, "indexes", qualified(schema, table), connection -> {
+            return withConnection(services, connectionId, ctx.tenantId(), "indexes", qualified(schema, table), connection -> {
                 List<IndexInfo> indexes = MetadataProvider.indexes(connection, catalog, schema, table);
                 List<Object> payloads = new ArrayList<>(indexes.size());
                 for (IndexInfo index : indexes) {
@@ -138,7 +138,7 @@ public final class MetadataHandlers {
             // Presentation only; the statement is still derived entirely from JDBC metadata.
             DdlBuilder.Options options = DdlBuilder.Options.from(Json.mapValue(params, "options"));
 
-            return withConnection(services, connectionId, "ddl", qualified(schema, table), connection ->
+            return withConnection(services, connectionId, ctx.tenantId(), "ddl", qualified(schema, table), connection ->
                     Json.obj(
                             "table", table,
                             "schema", schema,
@@ -164,13 +164,14 @@ public final class MetadataHandlers {
     private static Object withConnection(
             BridgeServices services,
             String connectionId,
+            String tenantId,
             String call,
             String subject,
             ConnectionPool.SqlAction<Object> action) throws SQLException {
 
         long startNanos = System.nanoTime();
         try {
-            Object payload = services.connections().require(connectionId)
+            Object payload = services.connections().require(connectionId, tenantId)
                     .withConnection(BORROW_TIMEOUT_MILLIS, action);
             services.metadata().record(
                     connectionId,

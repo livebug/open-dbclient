@@ -314,6 +314,10 @@ async function runSingleStatement(
     bridge: dependencies.bridge,
     connections: dependencies.connections,
     exportService: dependencies.exportService,
+    // Only reached when the user asks for a statement that has to identify a row: the grid reads a
+    // table's key lazily rather than on every result.
+    metadata: dependencies.metadata,
+    virtualDocuments: dependencies.virtualDocuments,
     onRerun: async () => {
       await execute(dependencies, editor, profile, sql);
     },
@@ -429,6 +433,10 @@ async function runTablePreview(
     bridge: dependencies.bridge,
     connections: dependencies.connections,
     exportService: dependencies.exportService,
+    // Only reached when the user asks for a statement that has to identify a row: the grid reads a
+    // table's key lazily rather than on every result.
+    metadata: dependencies.metadata,
+    virtualDocuments: dependencies.virtualDocuments,
     onRerun: async () => {
       await runTablePreview(dependencies, node);
     },
@@ -978,6 +986,10 @@ async function showDdlFromQuery(
     bridge: dependencies.bridge,
     connections: dependencies.connections,
     exportService: dependencies.exportService,
+    // Only reached when the user asks for a statement that has to identify a row: the grid reads a
+    // table's key lazily rather than on every result.
+    metadata: dependencies.metadata,
+    virtualDocuments: dependencies.virtualDocuments,
     onRerun: async () => {
       await showDdl(dependencies, table);
     },

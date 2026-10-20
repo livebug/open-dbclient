@@ -230,7 +230,10 @@ form.addEventListener('submit', (event) => {
 // Any edit invalidates the previous test result, so Save goes back to being unavailable until the
 // current values have been tested. This is the whole point of the button being disabled by default.
 form.addEventListener('input', () => {
-  if (!saveButton.disabled) {
+  // Nothing to invalidate when Save is already unavailable; the test that enabled it is the one this
+  // has to take back. The condition was inverted, so editing after a passing test left Save enabled
+  // and the form could store values that had never been tested.
+  if (saveButton.disabled) {
     return;
   }
   // Editing after a successful test means the result no longer describes what would be saved.

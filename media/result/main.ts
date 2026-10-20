@@ -11,12 +11,16 @@
  */
 
 import type {
+  GridCellEdit,
   GridColumn,
+  GridRowForSql,
+  GridStatementKind,
   GridValue,
   HostToWebviewMessage,
   WebviewToHostMessage,
 } from '../../src/webview/messages';
 import { setLocale, t } from '../../src/util/i18n';
+import { countStatement } from '../../src/sql/statementBuilder.ts';
 
 declare function acquireVsCodeApi<T = unknown>(): {
   postMessage(message: WebviewToHostMessage): void;
@@ -90,7 +94,6 @@ const body = table.querySelector('tbody') as HTMLTableSectionElement;
 
 let contextMenu: HTMLDivElement | undefined;
 let detailPanel: HTMLDivElement | undefined;
-let selectedCell: HTMLTableCellElement | undefined;
 let renderScheduled = false;
 
 /** The slice of rows currently in the DOM, used to skip redundant rebuilds on scroll. */
@@ -100,6 +103,40 @@ let renderedWindow:
 
 /** Height of the sticky header, re-measured whenever the table content is rebuilt. */
 let headerHeight = 0;
+
+/** A cell address: an absolute row index in the result, and a column index. */
+interface CellRef {
+  readonly row: number;
+  readonly column: number;
+}
+
+/**
+ * Edits the user has made, keyed by {@link editKey}.
+ *
+ * Keyed by the *absolute* row index rather than by position in the rendered window, because the row
+ * the user edited has to still be theirs after a page change or a scroll: the window holds a few dozen
+ * rows, the edits belong to the result.
+ */
+const pending = new Map<string, GridCellEdit>();
+
+/** The selected range. Both ends are absolute row indexes, so it survives paging and scrolling. */
+let selection: { anchor: CellRef; focus: CellRef } | undefined;
+
+/** The cell being typed into right now, if any. */
+let editing: CellRef | undefined;
+
+/** The true total, once the user has asked for it; undefined means the count has not been run. */
+let countedTotal: number | undefined;
+
+/** The columns the host will use to identify a row, as it reported them. */
+let identityNames: readonly string[] = [];
+
+/** A one-line note from the host: a generated statement, or why one could not be written. */
+let notice: string | undefined;
+
+function editKey(row: number, column: number): string {
+  return `${row}|${column}`;
+}
 
 // ---------------------------------------------------------------------------
 // message handling
@@ -115,6 +152,7 @@ window.addEventListener('message', (event: MessageEvent<HostToWebviewMessage>) =
       state.busy = true;
       state.columns = [];
       state.rows = [];
+      resetDerivedState();
       render();
       break;
 
@@ -133,6 +171,9 @@ window.addEventListener('message', (event: MessageEvent<HostToWebviewMessage>) =
       state.message = undefined;
       state.busy = false;
       viewport.scrollTop = 0;
+      // A new result describes different rows: edits, a selection and a total counted for the old
+      // result would all be attached to the wrong data.
+      resetDerivedState();
       render();
       break;
 
@@ -143,6 +184,7 @@ window.addEventListener('message', (event: MessageEvent<HostToWebviewMessage>) =
       state.elapsedMillis = message.elapsedMillis;
       state.message = t('{0} row(s) affected.', message.updateCount.toLocaleString());
       state.busy = false;
+      resetDerivedState();
       render();
       break;
 
@@ -162,12 +204,56 @@ window.addEventListener('message', (event: MessageEvent<HostToWebviewMessage>) =
       state.offset = message.offset;
       state.totalRows = message.totalRows;
       state.busy = false;
+      // A page that arrived is the answer to whatever the last failure was about.
+      state.message = undefined;
+      // Edits and the selection are keyed by absolute row index, so a page change must not clear them:
+      // the rows the user changed scroll back into view with their changes still on them.
       render();
       break;
 
     case 'pageError':
       state.busy = false;
       state.message = message.message;
+      // `render()`, not `renderStatus()`: the disabled state of the paging buttons is drawn by
+      // renderToolbar, so updating only the status left every button disabled for good after one
+      // failed fetch. The message itself has to be visible too, which renderStatus now does.
+      render();
+      break;
+
+    case 'totalCount':
+      countedTotal = message.total;
+      renderStatus();
+      break;
+
+    case 'countFailed':
+      notice = message.message;
+      renderStatus();
+      break;
+
+    case 'sqlReady':
+      notice =
+        message.warnings.length > 0
+          ? t(
+              '{0} statement(s) copied, with warnings: {1}',
+              message.statements,
+              message.warnings.join(' · '),
+            )
+          : t('{0} statement(s) copied and opened for review.', message.statements);
+      renderStatus();
+      break;
+
+    case 'sqlFailed':
+      notice = message.message;
+      renderStatus();
+      break;
+
+    case 'identityColumns':
+      identityNames = message.columns;
+      renderStatus();
+      break;
+
+    case 'notice':
+      notice = message.message;
       renderStatus();
       break;
 
@@ -175,6 +261,16 @@ window.addEventListener('message', (event: MessageEvent<HostToWebviewMessage>) =
       break;
   }
 });
+
+/** Clears everything derived from one result's rows: edits, selection, the count and any note. */
+function resetDerivedState(): void {
+  pending.clear();
+  selection = undefined;
+  editing = undefined;
+  countedTotal = undefined;
+  identityNames = [];
+  notice = undefined;
+}
 
 // ---------------------------------------------------------------------------
 // rendering
@@ -213,12 +309,40 @@ function renderToolbar(): void {
         requestPage(target - (target % state.pageSize));
       }),
     );
+
+    // The number above is the row ceiling once the result was truncated, so the real total is a
+    // separate question - asked for rather than run automatically, because counting a large table is
+    // a full scan the user pays for.
+    if (state.truncated) {
+      toolbar.append(separator());
+      toolbar.append(
+        countedTotal === undefined
+          ? button(t('Count all rows…'), () => post({ type: 'countRows' }), { disabled: state.busy })
+          : text(t('{0} row(s) in total', countedTotal.toLocaleString())),
+      );
+    }
   }
 
   toolbar.append(spacer());
 
   if (state.mode === 'result') {
-    toolbar.append(button(t('Export…'), () => post({ type: 'export' }), { primary: true }));
+    if (pending.size > 0) {
+      toolbar.append(
+        text(t('{0} edit(s)', pending.size.toLocaleString())),
+        button(t('Discard edits'), () => {
+          pending.clear();
+          editing = undefined;
+          render();
+        }),
+      );
+    }
+    toolbar.append(
+      button(t('SQL…'), (event) => {
+        const anchor = (event.currentTarget as HTMLElement).getBoundingClientRect();
+        showMenu(sqlMenuItems(), anchor.left, anchor.bottom + 2);
+      }),
+      button(t('Export…'), () => post({ type: 'export' }), { primary: true }),
+    );
   }
   if (state.busy) {
     toolbar.append(button(t('Cancel'), () => post({ type: 'cancel' })));
@@ -367,41 +491,144 @@ function renderVisibleRows(force = false): void {
 
 function renderRow(index: number): HTMLTableRowElement {
   const row = document.createElement('tr');
+  const absolute = state.offset + index;
 
   const gutter = document.createElement('td');
   gutter.className = 'row-number';
-  gutter.textContent = (state.offset + index + 1).toLocaleString();
+  gutter.textContent = (absolute + 1).toLocaleString();
+  if (rowIsDirty(absolute)) {
+    gutter.classList.add('dirty');
+    gutter.title = t('This row has edits that have not been written out');
+  }
   row.append(gutter);
 
   for (let columnIndex = 0; columnIndex < state.columns.length; columnIndex++) {
     const column = state.columns[columnIndex];
-    const value = state.rows[index]?.[columnIndex] ?? null;
     const cell = document.createElement('td');
 
     if (NUMERIC_TYPES.has(column.jdbcTypeName)) {
       cell.classList.add('numeric');
     }
-
-    if (value === null) {
-      const nullMarker = document.createElement('span');
-      nullMarker.className = 'null';
-      nullMarker.textContent = 'NULL';
-      cell.append(nullMarker);
-    } else {
-      const text = formatCell(value);
-      cell.textContent = text;
-      if (text.length > 80) {
-        cell.title = t('Double-click to see the full value');
-      }
+    if (isSelected(absolute, columnIndex)) {
+      cell.classList.add('selected');
+    }
+    if (pending.has(editKey(absolute, columnIndex))) {
+      cell.classList.add('dirty');
     }
 
     // Retained so the context menu knows which value was clicked.
     cell.dataset.row = String(index);
     cell.dataset.column = String(columnIndex);
+
+    if (editing && editing.row === absolute && editing.column === columnIndex) {
+      cell.append(cellEditor(absolute, columnIndex, cell));
+    } else {
+      const value = effectiveValue(absolute, columnIndex);
+      if (value === null) {
+        const nullMarker = document.createElement('span');
+        nullMarker.className = 'null';
+        nullMarker.textContent = 'NULL';
+        cell.append(nullMarker);
+      } else {
+        const text = formatCell(value);
+        cell.textContent = text;
+        if (text.length > 80) {
+          cell.title = t('Double-click to edit, or use Copy value for the whole value');
+        }
+      }
+    }
+
     row.append(cell);
   }
 
   return row;
+}
+
+/**
+ * The input a cell becomes while it is being edited.
+ *
+ * Every keystroke goes straight into the pending map instead of waiting for a commit. That is what
+ * makes editing survive the grid's own re-rendering: a scroll or a page change rebuilds the rows, and
+ * the editor is rebuilt from the pending value rather than from a variable that would have been lost.
+ * Nothing is sent to the extension until the user asks for the SQL.
+ */
+function cellEditor(
+  absolute: number,
+  columnIndex: number,
+  cell: HTMLTableCellElement,
+): HTMLInputElement {
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'cell-editor';
+  input.spellcheck = false;
+
+  const edit = pending.get(editKey(absolute, columnIndex));
+  const original = originalValue(absolute, columnIndex);
+  input.value = edit ? (edit.isNull ? '' : edit.value) : original === null ? '' : formatCell(original);
+  if ((edit && edit.isNull) || (!edit && original === null)) {
+    input.placeholder = 'NULL';
+    input.title = t('Empty means NULL here; Ctrl+Delete sets NULL again');
+  }
+
+  input.addEventListener('input', () => {
+    pending.set(editKey(absolute, columnIndex), {
+      column: columnIndex,
+      value: input.value,
+      isNull: false,
+    });
+    cell.classList.add('dirty');
+    // The row number is marked here rather than by re-rendering the rows: a re-render would take the
+    // caret with it, and the mark is the only thing that has to change.
+    cell.parentElement?.firstElementChild?.classList.add('dirty');
+    // Only the toolbar is repainted: re-rendering the grid here would take the caret with it.
+    renderToolbar();
+  });
+
+  input.addEventListener('keydown', (event) => {
+    // The editor owns these keys. Without stopping them here the document-level handler sees the same
+    // Enter that committed the edit and immediately opens the editor again.
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      event.stopPropagation();
+      editing = undefined;
+      render();
+      return;
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      // Escape puts the cell back to what the query returned, which is the only way to undo an edit
+      // without regenerating the result.
+      pending.delete(editKey(absolute, columnIndex));
+      editing = undefined;
+      render();
+      return;
+    }
+    if (event.key === 'Tab') {
+      event.preventDefault();
+      event.stopPropagation();
+      const next = columnIndex + (event.shiftKey ? -1 : 1);
+      if (next >= 0 && next < state.columns.length) {
+        editing = { row: absolute, column: next };
+        selection = { anchor: editing, focus: editing };
+        render();
+      }
+      return;
+    }
+    if (event.key === 'Delete' && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      event.stopPropagation();
+      pending.set(editKey(absolute, columnIndex), { column: columnIndex, value: '', isNull: true });
+      render();
+    }
+  });
+
+  // Focus once the input is in the document: an element that is not attached yet cannot take focus.
+  queueMicrotask(() => {
+    input.focus();
+    input.select();
+  });
+  return input;
 }
 
 function spacerRow(height: number): HTMLTableRowElement {
@@ -423,6 +650,9 @@ function renderStatus(): void {
       text(t('{0} column(s)', state.columns.length)),
       text(formatDuration(state.elapsedMillis)),
     );
+    if (countedTotal !== undefined) {
+      statusBar.append(text(t('{0} row(s) in total', countedTotal.toLocaleString())));
+    }
     if (state.truncated) {
       const warning = document.createElement('span');
       warning.className = 'warning';
@@ -432,6 +662,23 @@ function renderStatus(): void {
       );
       statusBar.append(warning);
     }
+    // A failed page fetch lands here: the grid keeps showing the page it has, and this is the only
+    // place that says why the next one never arrived.
+    if (state.message) {
+      const failed = document.createElement('span');
+      failed.className = 'warning';
+      failed.textContent = state.message;
+      statusBar.append(failed);
+    }
+    if (pending.size > 0) {
+      const edits = document.createElement('span');
+      edits.className = 'edits';
+      edits.textContent = t('{0} cell(s) edited', pending.size.toLocaleString());
+      statusBar.append(edits);
+    }
+    if (identityNames.length > 0) {
+      statusBar.append(text(t('Rows identified by {0}', identityNames.join(', '))));
+    }
   } else if (state.mode === 'update') {
     statusBar.append(text(state.message ?? ''), text(formatDuration(state.elapsedMillis)));
   } else if (state.mode === 'error') {
@@ -439,6 +686,20 @@ function renderStatus(): void {
     error.className = 'warning';
     error.textContent = state.errorCode ?? 'ERROR';
     statusBar.append(error);
+  }
+
+  if (notice) {
+    // Dismissable: a note about generated SQL is worth reading once and then worth getting out of the
+    // way, and there is nowhere else in the panel to put it.
+    const note = document.createElement('span');
+    note.className = 'notice';
+    note.textContent = notice;
+    note.title = t('Click to dismiss');
+    note.addEventListener('click', () => {
+      notice = undefined;
+      renderStatus();
+    });
+    statusBar.append(note);
   }
 
   statusBar.append(spacer());
@@ -473,26 +734,49 @@ window.addEventListener('resize', () => {
 });
 
 table.addEventListener('dblclick', (event) => {
-  const cell = (event.target as HTMLElement).closest('td');
-  if (!cell || cell.classList.contains('row-number')) {
-    return;
-  }
-  const value = valueForCell(cell);
-  showDetail(value);
-});
-
-table.addEventListener('contextmenu', (event) => {
-  const cell = (event.target as HTMLElement).closest('td');
-  if (!cell || cell.classList.contains('row-number')) {
+  const cell = cellOf(event.target as HTMLElement);
+  if (!cell) {
     return;
   }
   event.preventDefault();
-  selectCell(cell);
-  showContextMenu(event.clientX, event.clientY, cell);
+  beginEdit(cell);
+});
+
+table.addEventListener('click', (event) => {
+  const cell = cellOf(event.target as HTMLElement);
+  if (!cell) {
+    return;
+  }
+  const reference = referenceOf(cell);
+  // Shift extends the range from where the user last clicked, which is what makes a block of cells
+  // copyable as one piece of text.
+  selection = event.shiftKey && selection
+    ? { anchor: selection.anchor, focus: reference }
+    : { anchor: reference, focus: reference };
+  editing = undefined;
+  // Only the rows are repainted: a full render would rebuild the toolbar for a click that cannot
+  // have changed it.
+  renderVisibleRows(true);
+});
+
+table.addEventListener('contextmenu', (event) => {
+  const cell = cellOf(event.target as HTMLElement);
+  if (!cell) {
+    return;
+  }
+  event.preventDefault();
+  const reference = referenceOf(cell);
+  if (!selection || !isSelected(reference.row, reference.column)) {
+    selection = { anchor: reference, focus: reference };
+    renderVisibleRows(true);
+  }
+  showMenu(cellMenuItems(), event.clientX, event.clientY);
 });
 
 document.addEventListener('click', (event) => {
-  if (contextMenu && !contextMenu.contains(event.target as Node)) {
+  // A click on the toolbar is how its own menu opens; the event that opened it must not also close it.
+  const inToolbar = (event.target as HTMLElement).closest('#toolbar') !== null;
+  if (contextMenu && !contextMenu.contains(event.target as Node) && !inToolbar) {
     closeContextMenu();
   }
   if (detailPanel && !detailPanel.contains(event.target as Node)) {
@@ -504,43 +788,377 @@ document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') {
     closeContextMenu();
     closeDetail();
+    if (editing) {
+      // The editor handles its own Escape; this covers the case where focus has left it.
+      editing = undefined;
+      renderVisibleRows(true);
+    }
+    return;
   }
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'c' && selectedCell) {
-    // Let the browser handle a text selection, but make a plain cell click copyable.
+
+  // A cell is being typed into: the editor owns the keyboard, and the grid must not also move.
+  if (editing) {
+    return;
+  }
+
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'c' && selection) {
+    // Let the browser handle a text selection, but make a selected cell copyable.
     if (!window.getSelection()?.toString()) {
-      void copyText(valueForCell(selectedCell));
+      void copySelection();
+    }
+    return;
+  }
+
+  if (!selection || state.mode !== 'result') {
+    return;
+  }
+  const moves: Record<string, { row: number; column: number }> = {
+    ArrowUp: { row: -1, column: 0 },
+    ArrowDown: { row: 1, column: 0 },
+    ArrowLeft: { row: 0, column: -1 },
+    ArrowRight: { row: 0, column: 1 },
+  };
+  const move = moves[event.key];
+  if (move) {
+    event.preventDefault();
+    const next = {
+      row: Math.min(
+        Math.max(0, selection.focus.row + move.row),
+        Math.max(0, state.totalRows - 1),
+      ),
+      column: Math.min(
+        Math.max(0, selection.focus.column + move.column),
+        Math.max(0, state.columns.length - 1),
+      ),
+    };
+    selection = event.shiftKey
+      ? { anchor: selection.anchor, focus: next }
+      : { anchor: next, focus: next };
+    revealRow(next.row);
+    renderVisibleRows(true);
+    return;
+  }
+
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    const cell = cellAt(selection.focus.row, selection.focus.column);
+    if (cell) {
+      beginEdit(cell);
     }
   }
 });
 
-function selectCell(cell: HTMLTableCellElement): void {
-  selectedCell?.classList.remove('selected');
-  selectedCell = cell;
-  cell.classList.add('selected');
+/** The cell element of a click target, or undefined for the gutter and anything outside the grid. */
+function cellOf(target: HTMLElement): HTMLTableCellElement | undefined {
+  const cell = target.closest('td') as HTMLTableCellElement | null;
+  if (!cell || cell.classList.contains('row-number') || cell.querySelector('.cell-editor')) {
+    return undefined;
+  }
+  return cell;
 }
 
-function showContextMenu(x: number, y: number, cell: HTMLTableCellElement): void {
+/** Where a rendered cell sits in the result as a whole. */
+function referenceOf(cell: HTMLTableCellElement): CellRef {
+  return {
+    row: state.offset + Number(cell.dataset.row),
+    column: Number(cell.dataset.column),
+  };
+}
+
+function cellAt(row: number, column: number): HTMLTableCellElement | undefined {
+  const local = row - state.offset;
+  if (local < 0) {
+    return undefined;
+  }
+  const found = body.querySelectorAll('tr');
+  for (const element of found) {
+    const cell = element.children[column + 1] as HTMLTableCellElement | undefined;
+    if (cell && Number(cell.dataset.row) === local) {
+      return cell;
+    }
+  }
+  return undefined;
+}
+
+function beginEdit(cell: HTMLTableCellElement): void {
+  const reference = referenceOf(cell);
+  selection = { anchor: reference, focus: reference };
+  editing = reference;
+  renderVisibleRows(true);
+}
+
+/** Scrolls a row into view, so arrow keys can walk past the rendered window. */
+function revealRow(row: number): void {
+  const local = row - state.offset;
+  const top = headerHeight + local * ROW_HEIGHT;
+  if (top < viewport.scrollTop + headerHeight) {
+    viewport.scrollTop = Math.max(0, top - headerHeight - ROW_HEIGHT);
+  } else if (top + ROW_HEIGHT > viewport.scrollTop + viewport.clientHeight) {
+    viewport.scrollTop = top + ROW_HEIGHT - viewport.clientHeight;
+  }
+}
+
+function isSelected(row: number, column: number): boolean {
+  const bounds = selectionBounds();
+  return (
+    bounds !== undefined &&
+    row >= bounds.firstRow &&
+    row <= bounds.lastRow &&
+    column >= bounds.firstColumn &&
+    column <= bounds.lastColumn
+  );
+}
+
+function selectionBounds():
+  | { firstRow: number; lastRow: number; firstColumn: number; lastColumn: number }
+  | undefined {
+  if (!selection) {
+    return undefined;
+  }
+  return {
+    firstRow: Math.min(selection.anchor.row, selection.focus.row),
+    lastRow: Math.max(selection.anchor.row, selection.focus.row),
+    firstColumn: Math.min(selection.anchor.column, selection.focus.column),
+    lastColumn: Math.max(selection.anchor.column, selection.focus.column),
+  };
+}
+
+/**
+ * Copies the selected block as tab-separated text.
+ *
+ * Cells the user has edited are copied as they now read, not as the query returned them, because the
+ * clipboard is the one place where what is on screen is what should come out.
+ */
+async function copySelection(): Promise<void> {
+  const bounds = selectionBounds();
+  if (!bounds) {
+    return;
+  }
+  const lines: string[] = [];
+  for (let row = bounds.firstRow; row <= bounds.lastRow; row++) {
+    const values: string[] = [];
+    for (let column = bounds.firstColumn; column <= bounds.lastColumn; column++) {
+      const value = effectiveValue(row, column);
+      values.push(value === null ? '' : formatCell(value));
+    }
+    lines.push(values.join('\t'));
+  }
+  await copyText(lines.join('\n'));
+}
+
+/**
+ * What the user is looking at for a cell: the edit if there is one, otherwise the row's own value.
+ *
+ * Edits are held as text because that is what a text field produces; a column's type is not applied
+ * here, which is why a statement written from an edit quotes it unless the column is numeric and the
+ * text is genuinely a number.
+ */
+function effectiveValue(absolute: number, column: number): GridValue {
+  const edit = pending.get(editKey(absolute, column));
+  if (edit) {
+    return edit.isNull ? null : edit.value;
+  }
+  return originalValue(absolute, column);
+}
+
+/** The value the query returned, ignoring any edit. */
+function originalValue(absolute: number, column: number): GridValue {
+  return state.rows[absolute - state.offset]?.[column] ?? null;
+}
+
+function rowIsDirty(absolute: number): boolean {
+  for (const key of pending.keys()) {
+    if (key.startsWith(`${absolute}|`)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** One entry of the in-panel menu. */
+interface MenuItem {
+  readonly label: string;
+  readonly run: () => void;
+  readonly disabled?: boolean;
+}
+
+/**
+ * The statements the grid can write, and the questions it has to ask first.
+ *
+ * Nothing here is executed: a statement is put on the clipboard and opened for review. A grid is the
+ * wrong place to confirm a write, and the person asking for the SQL usually wants to read it, adjust
+ * it, or paste it into a migration.
+ */
+function sqlMenuItems(): MenuItem[] {
+  const rows = selectedRowIndexes();
+  return [
+    { label: t('Copy as INSERT'), disabled: rows.length === 0, run: () => generateStatement('insert', rows) },
+    { label: t('Copy as UPDATE'), disabled: rows.length === 0, run: () => generateStatement('update', rows) },
+    { label: t('Copy as DELETE'), disabled: rows.length === 0, run: () => generateStatement('delete', rows) },
+    {
+      label: t('Copy as SELECT COUNT(*)'),
+      // Copied, not run: the statement is wanted for a report or a script far more often than the
+      // number is wanted right now, and running it is the toolbar's "Count all rows…".
+      run: () => {
+        const statement = countStatement(state.sql);
+        if (!statement) {
+          notice = t('Only a statement that returns rows can be counted.');
+          renderStatus();
+          return;
+        }
+        notice = t('Copied the COUNT statement.');
+        void copyText(statement);
+        renderStatus();
+      },
+    },
+    { label: t('Choose row identity columns…'), run: () => post({ type: 'chooseIdentityColumns' }) },
+  ];
+}
+
+/** Everything the menu offers on a cell, in the order it is offered. */
+function cellMenuItems(): MenuItem[] {
+  const bounds = selectionBounds();
+  const single =
+    bounds !== undefined && bounds.firstRow === bounds.lastRow && bounds.firstColumn === bounds.lastColumn;
+  const reference = single && bounds ? { row: bounds.firstRow, column: bounds.firstColumn } : undefined;
+  const items: MenuItem[] = [];
+
+  if (reference) {
+    items.push(
+      {
+        label: t('Edit cell'),
+        run: () => {
+          const cell = cellAt(reference.row, reference.column);
+          if (cell) {
+            beginEdit(cell);
+          }
+        },
+      },
+      {
+        label: t('Set NULL'),
+        run: () => {
+          pending.set(editKey(reference.row, reference.column), {
+            column: reference.column,
+            value: '',
+            isNull: true,
+          });
+          editing = undefined;
+          render();
+        },
+      },
+      {
+        label: t('View full value'),
+        run: () => showDetail(effectiveValue(reference.row, reference.column)),
+      },
+      {
+        label: t('Copy value'),
+        run: () => void copyText(copyableText(effectiveValue(reference.row, reference.column))),
+      },
+      {
+        label: t('Copy column name'),
+        run: () => void copyText(state.columns[reference.column]?.label ?? ''),
+      },
+    );
+  }
+
+  items.push(
+    { label: t('Copy selection'), run: () => void copySelection() },
+    {
+      label: t('Copy row'),
+      run: () => {
+        const row = bounds?.firstRow;
+        if (row !== undefined) {
+          void copyText(rowToText(row));
+        }
+      },
+    },
+    {
+      label: t('Copy row as JSON'),
+      run: () => {
+        const row = bounds?.firstRow;
+        if (row !== undefined) {
+          void copyText(rowToJson(row));
+        }
+      },
+    },
+    {
+      label: t('Copy all column names'),
+      run: () => void copyText(state.columns.map((column) => column.label).join('\t')),
+    },
+    ...sqlMenuItems(),
+  );
+  return items;
+}
+
+/**
+ * Hands the host the rows to write statements for.
+ *
+ * INSERT and UPDATE are given different things on purpose. An INSERT of what is on screen is the
+ * edited row, so the edits *are* the row. An UPDATE has to name the rows it matches, so the original
+ * values travel with the edits rather than merged into them: merging would build a `WHERE` from a
+ * value that no row has any more.
+ */
+function generateStatement(kind: GridStatementKind, rows: readonly number[]): void {
+  const payload: GridRowForSql[] = rows.map((absolute) =>
+    kind === 'insert'
+      ? {
+          original: state.columns.map((_, column) => effectiveValue(absolute, column)),
+        }
+      : {
+          original: state.columns.map((_, column) => originalValue(absolute, column)),
+          changes: pendingForRow(absolute),
+        },
+  );
+  post({ type: 'generateSql', kind, rows: payload });
+}
+
+/** The rows the selection covers, as absolute indexes. */
+function selectedRowIndexes(): number[] {
+  const bounds = selectionBounds();
+  if (!bounds) {
+    return [];
+  }
+  const rows: number[] = [];
+  for (let row = bounds.firstRow; row <= bounds.lastRow; row++) {
+    rows.push(row);
+  }
+  return rows;
+}
+
+/** The edits made to one row, in column order. */
+function pendingForRow(absolute: number): GridCellEdit[] {
+  const edits: GridCellEdit[] = [];
+  for (const [key, edit] of pending) {
+    if (Number(key.slice(0, key.indexOf('|'))) === absolute) {
+      edits.push(edit);
+    }
+  }
+  return edits.sort((left, right) => left.column - right.column);
+}
+
+/** Places the menu, flipping it when the click is near an edge. */
+function showMenu(items: readonly MenuItem[], x: number, y: number): void {
   closeContextMenu();
 
   contextMenu = document.createElement('div');
   contextMenu.id = 'context-menu';
+  for (const item of items) {
+    contextMenu.append(
+      button(
+        item.label,
+        () => {
+          closeContextMenu();
+          item.run();
+        },
+        { disabled: item.disabled === true },
+      ),
+    );
+  }
 
-  const rowIndex = Number(cell.dataset.row);
-  const columnIndex = Number(cell.dataset.column);
-
-  contextMenu.append(
-    button(t('Copy value'), () => copyText(valueForCell(cell))),
-    button(t('Copy column name'), () => copyText(state.columns[columnIndex]?.label ?? '')),
-    button(t('Copy row'), () => copyText(rowToText(rowIndex))),
-    button(t('Copy row as JSON'), () => copyText(rowToJson(rowIndex))),
-    button(t('Copy all column names'), () => copyText(state.columns.map((column) => column.label).join('\t'))),
-  );
-
-  // Positioned within the viewport, flipping when the click is near an edge.
   document.body.append(contextMenu);
   const rect = contextMenu.getBoundingClientRect();
-  contextMenu.style.left = `${Math.min(x, window.innerWidth - rect.width - 4)}px`;
-  contextMenu.style.top = `${Math.min(y, window.innerHeight - rect.height - 4)}px`;
+  contextMenu.style.left = `${Math.max(4, Math.min(x, window.innerWidth - rect.width - 4))}px`;
+  contextMenu.style.top = `${Math.max(4, Math.min(y, window.innerHeight - rect.height - 4))}px`;
 }
 
 function closeContextMenu(): void {
@@ -621,19 +1239,24 @@ function formatCell(value: GridValue): string {
   return JSON.stringify(value);
 }
 
-function valueForCell(cell: HTMLTableCellElement): GridValue {
-  const rowIndex = Number(cell.dataset.row);
-  const columnIndex = Number(cell.dataset.column);
-  return state.rows[rowIndex]?.[columnIndex] ?? null;
+/**
+ * The text a copied cell holds.
+ *
+ * Separate from {@link formatCell} because the two answer different questions: a cell is *displayed*
+ * as `NULL`, but copying it has to yield nothing, exactly as "Copy row" already does. Passing the
+ * raw {@link GridValue} to the clipboard instead meant a null cell copied the four characters
+ * `null`, and an array - which `String()` joins with commas - lost its structure entirely.
+ */
+function copyableText(value: GridValue): string {
+  return value === null ? '' : formatCell(value);
 }
 
-function rowToText(rowIndex: number): string {
-  const row = state.rows[rowIndex] ?? [];
-  return row.map((value) => (value === null ? '' : formatCell(value))).join('\t');
+/** One row as tab-separated text, with any edits applied: what is on screen is what is copied. */
+function rowToText(absolute: number): string {
+  return state.columns.map((_, column) => copyableText(effectiveValue(absolute, column))).join('\t');
 }
 
-function rowToJson(rowIndex: number): string {
-  const row = state.rows[rowIndex] ?? [];
+function rowToJson(absolute: number): string {
   const object: Record<string, GridValue> = {};
   const seen = new Set<string>();
 
@@ -645,7 +1268,7 @@ function rowToJson(rowIndex: number): string {
       key = `${column.label}_${suffix++}`;
     }
     seen.add(key);
-    object[key] = row[index] ?? null;
+    object[key] = effectiveValue(absolute, index);
   });
 
   return JSON.stringify(object, null, 2);
@@ -675,7 +1298,7 @@ function separator(): HTMLSpanElement {
 
 function button(
   label: string,
-  onClick: () => void,
+  onClick: (event: MouseEvent) => void,
   options?: { disabled?: boolean; primary?: boolean },
 ): HTMLButtonElement {
   const element = document.createElement('button');

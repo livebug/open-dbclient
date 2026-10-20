@@ -158,12 +158,21 @@ export class MetadataCache {
     if (!this.connections.isConnected(connectionId)) {
       return;
     }
+    const startedAt = Date.now();
     const scope = {
       connectionId,
       catalog: this.catalogFor(connectionId),
       connectionName: this.connections.displayNameOf(connectionId),
       url: this.connections.urlOf(connectionId),
     };
+    // Said before the work rather than after it: these two reads happen while the user is looking at a
+    // freshly connected tree, and if they are slow this line is what makes the cause visible.
+    log.debug(
+      t(
+        'Prefetching the table list of {0} for completion',
+        this.connections.displayNameOf(connectionId) ?? connectionId,
+      ),
+    );
     try {
       const [schemas, allTables] = await Promise.all([
         this.metadata.schemas(scope).catch(() => [] as string[]),
@@ -182,15 +191,18 @@ export class MetadataCache {
       });
       log.debug(
         t(
-          'Completion cache: {0} table(s) for {1}',
+          'Completion cache: {0} table(s) for {1} in {2} ms',
           names.length,
           this.connections.displayNameOf(connectionId) ?? connectionId,
+          Date.now() - startedAt,
         ),
       );
     } catch (error) {
       // Remembered, because completion runs on every keystroke and this failed once already.
       this.failedTables.add(connectionId);
-      log.debug(t('Could not preload tables for completion: {0}', String(error)));
+      log.debug(
+        t('Could not preload tables for completion after {0} ms: {1}', Date.now() - startedAt, String(error)),
+      );
     }
   }
 
@@ -198,6 +210,7 @@ export class MetadataCache {
     connectionId: string,
     name: QualifiedTableName,
   ): Promise<readonly CachedColumn[]> {
+    const startedAt = Date.now();
     try {
       const columns: ColumnInfo[] = await this.metadata.columns({
         connectionId,
@@ -207,6 +220,9 @@ export class MetadataCache {
         connectionName: this.connections.displayNameOf(connectionId),
         url: this.connections.urlOf(connectionId),
       });
+      log.debug(
+        t('Loaded {0} column(s) of {1} in {2} ms', columns.length, name.table, Date.now() - startedAt),
+      );
       return columns.map((column) => ({
         name: column.name,
         displayType: column.displayType,
@@ -216,7 +232,9 @@ export class MetadataCache {
     } catch (error) {
       // The empty answer is remembered by the caller like any other - a name the driver cannot describe is
       // not worth asking about again on the next keystroke - and this line says why it is empty.
-      log.debug(t("Could not load columns of '{0}': {1}", name.table, String(error)));
+      log.debug(
+        t("Could not load columns of '{0}' after {1} ms: {2}", name.table, Date.now() - startedAt, String(error)),
+      );
       return [];
     }
   }

@@ -11,7 +11,7 @@
 | 步骤 | 联网时 | 断网时 |
 |---|---|---|
 | `npm ci` | ✅ | ❌ **只有这一步** |
-| `npm test`(类型检查 + 文档/文案检查 + 62 项 Java 测试 + 153 项 TS 测试) | ✅ | ✅ |
+| `npm test`(类型检查 + 文档/文案检查 + 77 项 Java 测试 + 213 项 TS 测试) | ✅ | ✅ |
 | `npm run smoke -- <驱动目录>`(131 项端到端检查) | ✅ | ✅ |
 | `npm run bridge:compile`(Java 桥构建) | ✅ | ✅ |
 | `npm run package`(打 VSIX) | ✅ | ✅ |
@@ -62,7 +62,7 @@ node scripts/offline-doctor.mjs
 ### 1. 解包并安装依赖
 
 ```bash
-tar -xzf open-dbclient-offline-0.2.0-linux-x64.tar.gz
+tar -xzf open-dbclient-offline-<版本>-linux-x64.tar.gz
 cd source
 
 # 用包里的缓存离线安装,不访问任何网络
@@ -96,7 +96,7 @@ npm run bridge:compile  # Java 桥 → resources/bridge.jar
 
 ```bash
 npm run package            # → build/open-dbclient-<版本>.vsix
-code --install-extension build/open-dbclient-0.2.0.vsix
+code --install-extension build/open-dbclient-<版本>.vsix
 ```
 
 或在 VS Code 里 `Ctrl+Shift+P` → **Extensions: Install from VSIX...**。
@@ -151,8 +151,8 @@ npm ci    # 有网时;没网就用 --offline --cache
 
 ### CI:GitHub Actions 工作流
 
-`.github/workflows/` 下的两个工作流在内网跑不了,而且 `release.yml` 还会从
-`repo1.maven.org` 下载 sqlite 驱动。**内网不需要它们** —— 本地命令已经覆盖了同样的检查。
+`.github/workflows/` 下的两个工作流在内网跑不了,而且它们都会从 `repo1.maven.org`
+下载 sqlite 驱动(端到端检查需要)。**内网不需要它们** —— 本地命令已经覆盖了同样的检查。
 
 如果要接内网 GitLab CI,直接照搬本地命令即可:
 

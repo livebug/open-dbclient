@@ -5,10 +5,12 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![VS Code](https://img.shields.io/badge/VS%20Code-%5E1.90.0-007ACC.svg)](https://code.visualstudio.com/)
 
-> A universal JDBC database client for VS Code: connect, SQL completion, execute, export, table
-> structure and JDBC-level health monitoring — without being tied to any particular database.
+> A universal JDBC database client for VS Code: connect, SQL completion, execute, edit results,
+> export, table structure and JDBC-level health monitoring — without being tied to any particular
+> database.
 
-用 JDBC 连接**任意**数据库的 VS Code 客户端:连接、SQL 智能补全、执行、导出、表结构、健康监控。
+用 JDBC 连接**任意**数据库的 VS Code 客户端:连接、SQL 智能补全、执行、结果网格编辑与写回、
+导出、表结构、健康监控。
 
 它**不绑定任何数据库**:不写 `if (mysql) ... else if (oracle) ...`,只走 JDBC 标准 API 加能力探测。
 驱动由你自己提供,想连什么就放什么 jar。
@@ -16,6 +18,7 @@
 ```mermaid
 flowchart LR
     A["VS Code 扩展<br/>(TypeScript)"] -- "NDJSON / stdio" --> B["Java 桥<br/>java -jar bridge.jar"]
+    F["自研客户端 / 脚本"] -. "--listen TCP(可选)" .-> B
     B -- "Driver.connect()" --> C["你自备的<br/>JDBC 驱动 jar"]
     C --> D[("数据库")]
     B -. "大结果集落盘<br/>按页读取" .-> E["临时文件"]
@@ -30,6 +33,7 @@ flowchart LR
 - [准备 JDBC 驱动](#准备-jdbc-驱动)
 - [快速上手](#快速上手)
 - [功能详解](#功能详解)
+- [共享桥服务](#共享桥服务)
 - [命令与快捷键](#命令与快捷键)
 - [配置项](#配置项)
 - [架构与设计取舍](#架构与设计取舍)
@@ -329,7 +333,7 @@ WHERE created_at >= ${V_DATE}
 
 - 虚拟滚动:几十万行也不卡(界面每页 200 行,按需从磁盘拉)
 - **列注释即中文名**:驱动上报了列的注释时,表头显示注释,下面一行小字仍然是物理列名与类型
-  —— 只看注释没法写 SQL,只看列名又读不懂 `AMT_01`。双击单元格可看完整值。
+  —— 只看注释没法写 SQL,只看列名又读不懂 `AMT_01`。双击单元格可看完整内容。
   **注释是每个表一次 `getColumns` 调用换来的**,慢库上这就是查询慢的原因 ——
   用 `result.columnRemarks` = `false` 关掉(结果与导出就只显示物理列名,不再发任何元数据调用),
   查过的结果在会话内会记住,同一张表不会重复付这笔代价
@@ -338,7 +342,38 @@ WHERE created_at >= ${V_DATE}
 - 单元格值:超过 64 KiB 截断显示;大于 2^53 的整数与 `BigDecimal` **转成字符串**避免精度丢失;
   二进制显示为 `[blob N bytes...]`
 - 结果集**不经过 IPC**:桥直接落盘成临时文件,内存占用有上限
-  (`open-dbclient.result.maxCacheBytes`,默认 512 MiB,SIG 会按 LRU 淘汰最旧的)
+  (`open-dbclient.result.maxCacheBytes`,默认 512 MiB,超出时按 LRU 淘汰最旧的)
+
+**选择与编辑**
+
+- 单击选中单元格,`Shift+单击` 从上次点击处扩选一块;方向键移动,`Ctrl+C` 把选中的格子按 TSV
+  复制,可以直接粘进 Excel
+- **双击**进入编辑(或右键「Edit cell」):`Enter` 提交这一格,`Tab` 移到下一列,`Esc` 放弃本格修改,
+  `Ctrl+Delete` 设为 `NULL`。原值为 `NULL` 的格子输入框为空,并以 `NULL` 作占位提示
+- 改过的格子和所在行号会标出来,工具栏显示「N 处修改」;「Discard edits」一次性放弃全部修改。
+  **修改只留在界面上** —— 在你要求生成 SQL 之前,不会发给扩展,更不会写进数据库
+- 右键还能「Copy value」「Copy column name」「View full value」查看单元格完整内容
+  (桥对超过 64 KiB 的值会截断,并在末尾注明省略了多少字符)
+
+**把结果写成 SQL**
+
+选中若干行后右键:
+
+| 菜单 | 生成 |
+|---|---|
+| Copy as INSERT | 一条多行 `INSERT`,列名取自结果集 |
+| Copy as UPDATE | 每个选中行一条 `UPDATE`;有修改时只写改过的列,没有修改时写除定位列外的所有列 |
+| Copy as DELETE | 每个选中行一条 `DELETE ... WHERE <定位列>` |
+| Copy as SELECT COUNT(*) | 把原语句包成统计总数的 `COUNT(*)`(只复制,不执行) |
+| Choose row identity columns… | 选择用哪些列定位一行(默认用主键) |
+
+- 生成的 SQL **不会被执行**:它被复制到剪贴板,同时在编辑器里打开一份 `<结果>.changes.sql` 供审阅
+- `UPDATE` / `DELETE` 必须能唯一确定一行:优先用主键;没有主键(或读不到)时问你要用哪些列,
+  选择按表记住。`INSERT` 不需要定位列
+- 不能精确写回的值不会被硬写:被截断的单元格、二进制占位值、SQL 数组会在文件头以注释给出警告;
+  如果用来定位的值本身不可靠,该行会**整行跳过**并计数 —— 宁可少一条,也不改错行
+- 结果被截断时,工具栏还会出现「Count all rows…」:它**直接执行**统计并把总数显示在工具栏;
+  「Copy as SELECT COUNT(*)」只复制语句,不执行
 
 ### 表结构与 DDL
 
@@ -586,6 +621,57 @@ Markdown 报告,包含:
 
 ---
 
+## 共享桥服务
+
+扩展自己始终用 **stdio** 与桥通信(一条子进程、一个客户端)。`bridge.jar` 也可以作为**常驻服务**运行,
+让多个客户端共用一个 JVM、同一套已加载驱动、同一个连接池与结果缓存 —— 典型场景是自己写脚本/工具,
+或让 VS Code 之外的程序也用同一批驱动。
+
+```bash
+java -jar bridge.jar --listen 7878 --token "$(cat ~/.opendbclient-token)"
+# bridge 0.4.0 listening on port 7878 (token required)
+```
+
+- `--stdio` —— 默认。一条 stdin/stdout 连接,由启动方独占
+- `--listen <端口>`(别名 `-p` / `--port`)—— 监听 TCP,接受任意多个客户端
+- `--token <密钥>` —— 共享密钥。设置后**每个请求帧都必须带 `token`**,否则返回 `UNAUTHORIZED`
+
+协议是**每行一个 JSON**(NDJSON),三种帧:
+
+```json
+{"id":"1","method":"connection.open","params":{...},"token":"..."}
+{"id":"1","ok":true,"result":{...}}
+{"type":"event","method":"query.progress","params":{...}}
+```
+
+### 鉴权与租户
+
+- 设置 `--token` 后,鉴权发生在派发之前,比较用 `MessageDigest.isEqual`(常量时间);
+  不带 token 的请求直接以 `UNAUTHORIZED` 拒绝
+- 请求帧还可带 `tenantId` / `sessionId`。`connection.open` 会把 `tenantId` 记成这条连接的归属,
+  后续 `query.execute`、`metadata.*`、`connection.close`、事务都必须带**同一个** `tenantId`,
+  否则返回 `FORBIDDEN`;`connection.list` 会带出 `tenantId`
+- **注意这是"防误操作",不是身份认证**:任何持有共享 token 的人都可以自己填一个 `tenantId`,
+  也能从 `connection.list` 看到别人的 `tenantId`。要把它当安全边界,需要在上层做认证,或者在桥前面
+  加一层真正的认证/TLS 网关
+- **`--token` 走命令行会出现在 `ps` 里**,能不用命令行就别用(例如用包装脚本从文件读入);链路本身
+  是明文 TCP,只在可信网络里开,或自己套 TLS / SSH 隧道
+
+### 事务
+
+四个方法,状态绑在 `connectionId` 上:
+
+- `connection.beginTransaction` —— 参数 `connectionId`、可选 `timeoutSeconds`;超时自动回滚
+- `connection.commitTransaction` —— 提交
+- `connection.rollbackTransaction` —— 回滚
+- `connection.transactionStatus` —— 查询是否活跃
+
+事务激活期间,该连接的 `query.execute` 自动路由到被钉住的那条物理连接;关闭连接会先回滚未提交的事务。
+驱动不支持事务(`DatabaseMetaData.supportsTransactions` 返回 false)时直接报错,不会悄悄降级成
+"每条语句自动提交"。VS Code 扩展界面暂未使用这组 API,它面向的是自研客户端。
+
+---
+
 ## 命令与快捷键
 
 按 `Ctrl+Shift+P` 输入 `DB Client` 可以看到全部命令。
@@ -721,6 +807,9 @@ VS Code 扩展进程 (TypeScript)            Java 桥进程 (零依赖)
                                           └── JMX 指标
 ```
 
+桥默认由扩展以子进程方式拉起、只走 stdio;加上 `--listen` 它也能常驻运行,供多个客户端共用一个
+JVM(见[共享桥服务](#共享桥服务))。
+
 **为什么用外挂 Java 进程而不是纯 Node?**
 
 JDBC 是 Java 的东西。要在 Node 里连任意数据库,得为每个数据库引一个原生驱动包 —— 那就违背了
@@ -730,7 +819,7 @@ JDBC 是 Java 的东西。要在 Node 里连任意数据库,得为每个数据�
 
 用户的驱动 jar 常常是含 shade 的 fat jar,自己带着一堆库。桥一旦也引入 HikariCP、POI 之类,
 classpath 上的版本冲突就成了用户的问题。所以:连接池自己写,xlsx 自己写,JSON 编解码自己写。
-代价是代码量,收益是 `bridge.jar` 只有约 144 KiB,且几乎不可能和任何驱动冲突。
+代价是代码量,收益是 `bridge.jar` 只有约 175 KiB,且几乎不可能和任何驱动冲突。
 
 **为什么不用方言?**
 
@@ -755,7 +844,9 @@ classpath 上的版本冲突就成了用户的问题。所以:连接池自己写
 - 连接档案(主机、端口、用户名等)存在扩展的 `globalStorage` 下的 JSON 文件里
 - **权限提示**:任何能写这个 JSON 文件或能调用扩展命令的人,就相当于能连你配置的那些库 ——
   请按此评估共享机器上的使用
-- 与数据库之间**没有网络监听端口**,扩展与桥通过子进程 stdio 通信
+- **默认没有网络监听端口**:扩展与桥通过子进程 stdio 通信。`bridge.jar --listen` 可显式开启 TCP,
+  此时只有可选的共享密钥鉴权、链路是明文,适合可信网络;细节与注意事项见[共享桥服务](#共享桥服务)
+- 共享桥的 `tenantId` 由客户端自报,`--token` 是共享密钥而非身份认证 —— 它防误操作,不防恶意客户端
 - 桥进程的日志打到 stderr,不会污染协议流
 
 ---
@@ -783,7 +874,7 @@ npm run icon            # 重新生成扩展图标   → media/icon/icon.png
 ### 测试
 
 ```bash
-npm test        # 类型检查 + 文档/文案检查 + 62 项 Java 测试 + 153 项 TS 单测(无需数据库)
+npm test        # 类型检查 + 文档/文案检查 + 77 项 Java 测试 + 213 项 TS 单测(无需数据库)
 npm run verify  # 上面全部 + 构建桥 + 冒烟检查
 ```
 
@@ -818,7 +909,7 @@ cd - && npm run smoke -- /tmp/dbclient-drivers
 ```bash
 # 在有网的机器上(注意:要在与目标机器相同的 OS/CPU 架构上打)
 npm run bundle:offline -- --drivers /path/to/jdbc-drivers
-# → build/open-dbclient-offline-<版本>-<平台>.tar.gz,约 43 MB
+# → build/open-dbclient-offline-<版本>-<平台>.tar.gz,约 40 MB
 ```
 
 包里有源码、npm 缓存、已构建好的产物、驱动 jar、以及一份说明。拿到内网后先跑体检,再照说明走:
@@ -837,7 +928,7 @@ npm ci --offline --cache ../npm-cache
 bridge/src/main/java/com/opendbclient/bridge/
 ├── json/       手写 JSON 编解码(NaN、大整数、代理对都处理了)
 ├── rpc/        NDJSON 协议:并发派发、串行写入、取消、错误分类
-├── conn/       驱动加载、连接注册表、能力探测
+├── conn/       驱动加载、连接注册表、事务、能力探测
 ├── pool/       自研连接池
 ├── metadata/   表/列/索引读取 + DDL 生成
 ├── result/     值转换、结果落盘、分页
@@ -850,7 +941,7 @@ src/
 ├── model/      连接档案与存储、驱动属性文本的解析
 ├── driver/     驱动发现/下载
 ├── service/    连接、元数据、导出、历史、模板、变量
-├── sql/        SQL 上下文分析、补全、变量替换、code lens
+├── sql/        SQL 上下文分析、补全、变量替换、code lens、结果写回语句
 ├── tree/       连接树、历史树
 ├── webview/    结果网格、连接表单、变量视图
 ├── commands/   命令注册
@@ -864,11 +955,12 @@ src/
 - **没有方言层**。全部走标准 JDBC;某个数据库的私有语法、私有元数据、`\d` 之类的元命令都不支持
 - **健康监控不含数据库服务端指标**(连接数上限、锁等待、复制延迟等),只覆盖 JDBC 层与桥进程
 - **SQL 补全不做子查询 / CTE 作用域**,别名解析只在当前语句的顶层生效
-- **结果网格只读**,不能直接在网格里改数据
+- **共享桥只有共享密钥鉴权**:没有 TLS、没有身份认证与令牌轮换,`tenantId` 由客户端自报,
+  适合可信网络内多个工具共用一个 JVM
 - **不支持 SSH 隧道**(可以用本地端口转发绕过)
 - 驱动由用户自备,**扩展不校验驱动与目标数据库是否匹配**
 
-路线图(未承诺):数据编辑、SSH 隧道、方言层、应用市场发布。
+路线图(未承诺):SSH 隧道、方言层、应用市场发布、共享桥的 TLS 与身份认证。
 
 ---
 
@@ -877,25 +969,27 @@ src/
 发版是**打 tag 即自动完成**的:
 
 ```bash
-# 1. 更新版本号与 CHANGELOG
-npm version 0.4.0 --no-git-tag-version
+# 1. 更新版本号与 CHANGELOG(把 <版本> 换成新版本,例如 0.7.0)
+npm version <版本> --no-git-tag-version
 
 # 2. 提交
-git add -A && git commit -m "chore: release 0.4.0"
+git add -A && git commit -m "chore: release <版本>"
 
 # 3. 打 tag 并推送 —— 这一步会触发自动发版
-git tag v0.4.0
+git tag v<版本>
 git push origin main --tags
 ```
 
 推 tag 之后,`.github/workflows/release.yml` 会自动:
 
-1. 装 Node 24 与 JDK 17
-2. `npm ci` → 类型检查 → Java 单元测试 → SQL 测试
-3. 构建桥与扩展,用 `vsce package` 打出 `.vsix`
-4. 在 GitHub 上创建 Release,把 `open-dbclient-<版本>.vsix` 作为附件挂上去
+1. 装 Node 24 与 JDK 17,校验 tag 与 `package.json` 的版本一致
+2. `npm ci` → `npm test`(类型检查、文档/文案校验、Java 桥测试、TS 单测)
+3. 下载 SQLite 驱动,`npm run smoke` 跑真实的端到端检查
+4. 构建桥与扩展,用 `vsce package` 打出 `.vsix`
+5. 从 `CHANGELOG.md` 取本版本的小节作为发布说明
+6. 在 GitHub 上创建 Release,把 `open-dbclient-<版本>.vsix` 作为附件挂上去
 
-tag 名必须是 `v` 开头的语义化版本(`v0.2.0`)。发布产物里的版本号取自
+tag 名必须是 `v` 开头的语义化版本(`v0.7.0`)。发布产物里的版本号取自
 `package.json`,所以**先改 `package.json` 再打 tag**;workflow 会校验两者一致,不一致直接失败。
 
 手动打包(本地):

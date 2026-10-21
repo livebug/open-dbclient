@@ -184,7 +184,8 @@ INSERT INTO users (|        -- 补全列名
 ```
 
 补全数据来自 JDBC 元数据,连上就自动后台预取表名(可用
-`open-dbclient.intellisense.prefetchTables` 关掉)。
+`open-dbclient.intellisense.prefetchTables` 关掉)。预取**按 schema 分批**而不是一次扫整库:
+后者的结果会被驱动整个读进堆内存,超大 catalog 上足以把桥拖垮。
 
 ---
 
@@ -223,7 +224,8 @@ JDBC 桥进程自己输出、被原样转发的行(带 `[bridge]` / `[stderr]` �
 - 列的注释(注释里往往写着中文名)会显示在补全项的文档里
 - 关键字与代码片段补全:`sel` `ins` `upd` `del` `joi` `cre` `wit`
 - 补全逻辑跑在扩展进程内(**不走 IPC**),所以不占用每次按键的往返延迟
-- 元数据缓存:表名列表在连接建立后预加载一次(可用 `intellisense.prefetchTables` 关掉);
+- 元数据缓存:表名列表在连接建立后**按 schema 分批**预加载(可用 `intellisense.prefetchTables` 关掉),
+  缓存默认 `5` 分钟内有效(`metadata.cacheMinutes`),过期后下次补全再读,手动刷新则立即清空;
   列信息按「连接 + 目录 + 模式 + 表」做 LRU 缓存(`intellisense.columnCacheLimit`)
 - **“这个表没有列”也会被记住**:别名、CTE 名、写错的名字不会每敲一个字就查一次数据库 ——
   这类名字每次都只会回答“没有列”,以前正是这样在每次按键都发一次查询
@@ -762,6 +764,7 @@ java -jar bridge.jar --listen 7878 --token "$(cat ~/.opendbclient-token)"
 |---|---|---|---|
 | `metadata.queries` | array | `[]` | 自己写的模式/表/列/索引/目录/表类型查询 SQL(可带回表注释与附加字段),见[树里的模式/表/列/索引查询都可以自己写](#树里的模式表列索引查询都可以自己写推荐给慢库) |
 | `metadata.timeoutSeconds` | number | `30` | 等元数据读取多久后放弃;`0` 表示一直等 |
+| `metadata.cacheMinutes` | number | `5` | 树与补全的元数据缓存有效分钟数;`0` 表示直到断开连接或手动刷新 |
 
 ### 健康监控
 
@@ -874,7 +877,7 @@ npm run icon            # 重新生成扩展图标   → media/icon/icon.png
 ### 测试
 
 ```bash
-npm test        # 类型检查 + 文档/文案检查 + 77 项 Java 测试 + 213 项 TS 单测(无需数据库)
+npm test        # 类型检查 + 文档/文案检查 + 77 项 Java 测试 + 224 项 TS 单测(无需数据库)
 npm run verify  # 上面全部 + 构建桥 + 冒烟检查
 ```
 

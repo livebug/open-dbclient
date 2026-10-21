@@ -6,6 +6,7 @@ import type { ConnectionStore } from '../model/ConnectionStore';
 import type { DescribedTable } from '../model/tableDetails';
 import type { ConnectionService } from '../service/ConnectionService';
 import type { MetadataService } from '../service/MetadataService';
+import { isFresh } from '../sql/cacheAge';
 import { t } from '../util/i18n';
 import { log } from '../util/logger';
 import { catalogLevel } from './catalogLevel';
@@ -40,7 +41,7 @@ export class DatabaseTreeProvider
   implements vscode.TreeDataProvider<DatabaseTreeNode>, vscode.Disposable
 {
   private readonly emitter = new vscode.EventEmitter<DatabaseTreeNode | undefined>();
-  private readonly cache = new Map<string, DatabaseTreeNode[]>();
+  private readonly cache = new Map<string, { children: DatabaseTreeNode[]; loadedAt: number }>();
 
   /**
    * Table listings, keyed by connection, catalog and schema - deliberately without the folder.
@@ -50,7 +51,7 @@ export class DatabaseTreeProvider
    * this project is aimed at that call is the most expensive read in the tree. The name filter is applied per
    * node after the listing is read, so sharing it also means changing the filter no longer re-reads it.
    */
-  private readonly listings = new Map<string, DescribedTable[]>();
+  private readonly listings = new Map<string, { tables: DescribedTable[]; loadedAt: number }>();
 
   private readonly subscriptions: vscode.Disposable[] = [];
 
@@ -71,6 +72,14 @@ export class DatabaseTreeProvider
     private readonly store: ConnectionStore,
     private readonly connections: ConnectionService,
     private readonly metadata: MetadataService,
+    /**
+     * How long a listing stays valid, in milliseconds; 0 keeps it until an explicit refresh.
+     *
+     * The cache exists so that navigating the tree does not re-read the database on every arrow key.
+     * Without an age, though, a tree left open overnight answers from a catalog that may have been
+     * rebuilt under it. The setting behind this is the user's answer to how stale is too stale.
+     */
+    private readonly cacheTtlMs: () => number = () => 0,
   ) {
     this.subscriptions.push(
       this.store.onDidChange(() => this.refresh()),
@@ -171,11 +180,18 @@ export class DatabaseTreeProvider
 
     const key = nodeKey(node);
     const cached = this.cache.get(key);
-    if (cached) {
+    if (cached !== undefined && this.fresh(cached.loadedAt)) {
       log.trace(
-        t("Expanding '{0}' from the cached listing ({1} child/children)", nodeLabel(node), cached.length),
+        t(
+          "Expanding '{0}' from the cached listing ({1} child/children)",
+          nodeLabel(node),
+          cached.children.length,
+        ),
       );
-      return cached;
+      return cached.children;
+    }
+    if (cached !== undefined) {
+      this.cache.delete(key);
     }
 
     const startedAt = Date.now();
@@ -202,8 +218,13 @@ export class DatabaseTreeProvider
         children.length,
       ),
     );
-    this.cache.set(key, children);
+    this.cache.set(key, { children, loadedAt: Date.now() });
     return children;
+  }
+
+  /** True while a cache entry read at {@code loadedAt} is still within the configured lifetime. */
+  private fresh(loadedAt: number): boolean {
+    return isFresh(loadedAt, this.cacheTtlMs(), Date.now());
   }
 
   /** The saved connections, with their current state attached. */
@@ -363,8 +384,11 @@ export class DatabaseTreeProvider
   ): Promise<DescribedTable[]> {
     const key = listingKey(connectionId, catalog, schema);
     const cached = this.listings.get(key);
-    if (cached) {
-      return cached;
+    if (cached !== undefined && this.fresh(cached.loadedAt)) {
+      return cached.tables;
+    }
+    if (cached !== undefined) {
+      this.listings.delete(key);
     }
 
     const tables = await this.metadata.tables({
@@ -374,7 +398,7 @@ export class DatabaseTreeProvider
       connectionName: this.connections.displayNameOf(connectionId),
       url: this.connections.urlOf(connectionId),
     });
-    this.listings.set(key, tables);
+    this.listings.set(key, { tables, loadedAt: Date.now() });
     return tables;
   }
 

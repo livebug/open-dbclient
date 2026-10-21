@@ -2,7 +2,7 @@
   "name": "open-dbclient",
   "displayName": "Open DB Client",
   "description": "Universal JDBC database client: connect, SQL IntelliSense, execute, export, table structure and health monitoring.",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "publisher": "open-dbclient",
   "license": "MIT",
   "icon": "media/icon/icon.png",
@@ -634,6 +634,13 @@
           "default": 30,
           "minimum": 0,
           "markdownDescription": "%config.metadataTimeoutSeconds.description%"
+        },
+        "open-dbclient.metadata.cacheMinutes": {
+          "type": "number",
+          "default": 5,
+          "minimum": 0,
+          "maximum": 1440,
+          "markdownDescription": "%config.metadataCacheMinutes.description%"
         },
         "open-dbclient.ddl.queries": {
           "type": "array",

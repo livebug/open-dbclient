@@ -1,6 +1,9 @@
 import type { ColumnInfo, TableInfo } from '../bridge/protocol';
-import type { MetadataService } from '../service/MetadataService';
+import type { DescribedTable } from '../model/tableDetails';
+import type { MetadataService, TableRequest } from '../service/MetadataService';
 import type { ConnectionService } from '../service/ConnectionService';
+import { isFresh } from './cacheAge';
+import { prefetchScopes } from './prefetchPlan';
 import { parseQualifiedName, scopeOfTable, type QualifiedTableName } from './qualifiedName';
 import { t } from '../util/i18n';
 import { log } from '../util/logger';
@@ -40,6 +43,35 @@ export interface CachedTables {
   readonly qualifiers: readonly CachedQualifier[];
 }
 
+/** One cached value and when it was read, so an entry can age out without being invalidated by hand. */
+interface CacheEntry<T> {
+  readonly data: T;
+  readonly loadedAt: number;
+}
+
+/**
+ * How a cached listing ages.
+ *
+ * Injected rather than read from the settings here: this module is also reached by the unit tests, which
+ * run without a VS Code host. The extension passes a reader for the setting, so a change applies to the
+ * next read instead of needing a restart.
+ */
+export interface MetadataCacheOptions {
+  /** Milliseconds a listing stays valid; 0 or less keeps it until the connection closes or a refresh. */
+  readonly ttlMs?: () => number;
+  /** Injectable clock, for tests. */
+  readonly now?: () => number;
+}
+
+/**
+ * Stop prefetching once this many tables have been collected.
+ *
+ * Not a correctness limit - a partial list only makes completion suggest less - but a memory bound: the
+ * prefetch is the only read that can span a whole database, and on a warehouse with a huge catalog the
+ * driver materialises the entire result before the first row is seen.
+ */
+const PREFETCH_TABLE_BUDGET = 20_000;
+
 /**
  * Caches schema information for completion.
  *
@@ -55,8 +87,8 @@ export interface CachedTables {
  *   every keystroke.
  */
 export class MetadataCache {
-  private readonly tables = new Map<string, CachedTables>();
-  private readonly columns = new Map<string, readonly CachedColumn[]>();
+  private readonly tables = new Map<string, CacheEntry<CachedTables>>();
+  private readonly columns = new Map<string, CacheEntry<readonly CachedColumn[]>>();
   private readonly columnOrder: string[] = [];
   /**
    * Connections whose table prefetch failed, so completion asks once instead of on every keystroke.
@@ -66,25 +98,51 @@ export class MetadataCache {
    * restarting, then cost one broken query per character typed. Cleared with the rest of a connection's
    * state, so reconnecting or refreshing asks again.
    */
-  private readonly failedTables = new Set<string>();
+  private readonly failedTables = new Map<string, number>();
 
   private readonly tableLoads = new Map<string, Promise<void>>();
   private readonly columnLoads = new Map<string, Promise<readonly CachedColumn[]>>();
+  private readonly ttlMs: () => number;
+  private readonly now: () => number;
 
   constructor(
     private readonly metadata: MetadataService,
     private readonly connections: ConnectionService,
-  ) {}
-
-  /** Table names known for a connection, or undefined when nothing has been loaded yet. */
-  tablesFor(connectionId: string): CachedTables | undefined {
-    return this.tables.get(connectionId);
+    options: MetadataCacheOptions = {},
+  ) {
+    this.ttlMs = options.ttlMs ?? (() => 0);
+    this.now = options.now ?? (() => Date.now());
   }
 
-  /** Starts loading a connection's tables if they are not already loaded or in flight. */
+  /** True while an entry read at {@code loadedAt} is still within the configured lifetime. */
+  private fresh(loadedAt: number): boolean {
+    return isFresh(loadedAt, this.ttlMs(), this.now());
+  }
+
+  /** Table names known for a connection, or undefined when nothing fresh has been loaded yet. */
+  tablesFor(connectionId: string): CachedTables | undefined {
+    const entry = this.tables.get(connectionId);
+    return entry !== undefined && this.fresh(entry.loadedAt) ? entry.data : undefined;
+  }
+
+  /**
+   * Starts loading a connection's tables if they are not fresh and not already in flight.
+   *
+   * An expired listing is reloaded rather than served: the tree keeps answering from its own cache in the
+   * meantime, so the cost is a background read, not a blank completion list.
+   */
   ensureTables(connectionId: string): Promise<void> {
-    if (this.tables.has(connectionId) || this.failedTables.has(connectionId)) {
+    const cached = this.tables.get(connectionId);
+    if (cached !== undefined && this.fresh(cached.loadedAt)) {
       return Promise.resolve();
+    }
+    const failedAt = this.failedTables.get(connectionId);
+    if (failedAt !== undefined) {
+      if (this.fresh(failedAt)) {
+        return Promise.resolve();
+      }
+      // The failure has aged out with the listing, so asking again is worth it.
+      this.failedTables.delete(connectionId);
     }
     const existing = this.tableLoads.get(connectionId);
     if (existing) {
@@ -111,8 +169,8 @@ export class MetadataCache {
     const name = this.scoped(connectionId, parseQualifiedName(table));
     const key = columnKey(connectionId, name);
     const cached = this.columns.get(key);
-    if (cached) {
-      return cached;
+    if (cached !== undefined && this.fresh(cached.loadedAt)) {
+      return cached.data;
     }
 
     const inFlight = this.columnLoads.get(key);
@@ -174,20 +232,51 @@ export class MetadataCache {
       ),
     );
     try {
-      const [schemas, allTables] = await Promise.all([
-        this.metadata.schemas(scope).catch(() => [] as string[]),
-        // No type filter: the completion list should include views, and every driver labels them
-        // differently, so filtering would silently hide objects on some databases.
-        this.metadata.tables(scope),
-      ]);
+      const schemas = await this.metadata.schemas(scope).catch(() => [] as string[]);
+      // No type filter: the completion list should include views, and every driver labels them
+      // differently, so filtering would silently hide objects on some databases.
+      const allTables: TableInfo[] = [];
+      let truncated = false;
+
+      const readInto = async (request: TableRequest): Promise<void> => {
+        const batch = await this.metadata.tables(request).catch(() => [] as DescribedTable[]);
+        allTables.push(...batch);
+      };
+
+      // See prefetchScopes: one read per schema (or per catalog) rather than one over the whole
+      // database, because a driver asked for everything at once materialises the whole result before
+      // returning a row. Catalog names are only needed when there is no schema level to split on.
+      const catalogs =
+        schemas.length <= 1 && scope.catalog === undefined
+          ? await this.metadata.catalogs(scope).catch(() => [] as string[])
+          : [];
+      for (const part of prefetchScopes(schemas, catalogs, scope.catalog !== undefined)) {
+        if (allTables.length >= PREFETCH_TABLE_BUDGET) {
+          truncated = true;
+          break;
+        }
+        await readInto({ ...scope, ...part });
+      }
+
+      if (truncated) {
+        log.warn(
+          t(
+            'Completion prefetch stopped after {0} table(s); only part of the database is suggested',
+            PREFETCH_TABLE_BUDGET,
+          ),
+        );
+      }
 
       const names = allTables.map((table) => table.name);
       this.tables.set(connectionId, {
-        names,
-        // With exactly one schema, a bare table name is unambiguous; with several it is not, so no
-        // default is offered and the completion list stays honest about what it can resolve.
-        defaultSchema: schemas.length === 1 ? schemas[0] : undefined,
-        qualifiers: buildQualifiers(schemas, allTables),
+        data: {
+          names,
+          // With exactly one schema, a bare table name is unambiguous; with several it is not, so no
+          // default is offered and the completion list stays honest about what it can resolve.
+          defaultSchema: schemas.length === 1 ? schemas[0] : undefined,
+          qualifiers: buildQualifiers(schemas, allTables),
+        },
+        loadedAt: this.now(),
       });
       log.debug(
         t(
@@ -198,8 +287,9 @@ export class MetadataCache {
         ),
       );
     } catch (error) {
-      // Remembered, because completion runs on every keystroke and this failed once already.
-      this.failedTables.add(connectionId);
+      // Remembered, because completion runs on every keystroke and this failed once already. The
+      // timestamp lets the failure age out with the listing instead of blocking retries forever.
+      this.failedTables.set(connectionId, this.now());
       log.debug(
         t('Could not preload tables for completion after {0} ms: {1}', Date.now() - startedAt, String(error)),
       );
@@ -265,7 +355,7 @@ export class MetadataCache {
    * table is in, so the completion list can name it even though the user did not - see {@link scopeOfTable}.
    */
   private scoped(connectionId: string, name: QualifiedTableName): QualifiedTableName {
-    const known = this.tables.get(connectionId);
+    const known = this.tables.get(connectionId)?.data;
     return scopeOfTable(name, known?.qualifiers ?? [], known?.defaultSchema);
   }
 
@@ -278,7 +368,7 @@ export class MetadataCache {
    * every keystroke for as long as the user kept typing - exactly the traffic this cache exists to avoid.
    */
   private remember(key: string, columns: readonly CachedColumn[], limit: number): void {
-    this.columns.set(key, columns);
+    this.columns.set(key, { data: columns, loadedAt: this.now() });
 
     const existing = this.columnOrder.indexOf(key);
     if (existing >= 0) {

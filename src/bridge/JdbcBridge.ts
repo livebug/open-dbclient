@@ -495,6 +495,12 @@ log.warn(t('The JDBC bridge exited unexpectedly ({0}).{1}', summary, this.stderr
     return [
       `-Xmx${heap}`,
 
+      // A heap that has been exhausted cannot be repaired from inside the process: every further
+      // allocation fails, including the ones a recovery message needs. Exiting on the first OOM lets
+      // the supervised restart do its job with a fresh JVM - and a fresh JVM is also why the driver
+      // classpath is reloaded on the way back up.
+      '-XX:+ExitOnOutOfMemoryError',
+
       // Force UTF-8 on every stream. On Java 17 the platform default encoding is still derived from
       // the host locale, so on a Windows machine set to a legacy codepage every non-ASCII table name
       // or value would be mangled on its way through the protocol.

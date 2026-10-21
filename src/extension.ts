@@ -56,11 +56,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const drivers = new DriverManager(context, bridge);
   const exportService = new ExportService(bridge);
   const virtualDocuments = new VirtualDocumentProvider();
-  const tree = new DatabaseTreeProvider(store, connections, metadata);
+  // Read on every access rather than captured, so changing the setting applies to the next read
+  // instead of needing a window reload. `0` means "until an explicit refresh".
+  const cacheTtlMs = (): number =>
+    Math.max(
+      0,
+      vscode.workspace.getConfiguration().get<number>(Config.metadataCacheMinutes, 5),
+    ) * 60_000;
+  const tree = new DatabaseTreeProvider(store, connections, metadata, cacheTtlMs);
   const historyTree = new HistoryTreeProvider(history);
   const binding = new SqlEditorBinding(store);
   const health = new HealthMonitor(bridge, virtualDocuments, connections);
-  const metadataCache = new MetadataCache(metadata, connections);
+  const metadataCache = new MetadataCache(metadata, connections, { ttlMs: cacheTtlMs });
   const completion = new SqlCompletionProvider(metadataCache, binding, connections);
   const codeLens = new SqlCodeLensProvider();
   const variables = new VariableService(context);
@@ -220,6 +227,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       } else if (state === 'ready') {
         void vscode.commands.executeCommand('setContext', ContextKeys.bridgeReady, true);
         void applyBridgeConfiguration(dependencies);
+        // Every new JVM starts with an empty classpath, and a crash-restart happens without going
+        // through the restart command. Reloading here is what keeps the next connect working; the
+        // driver manager drops its list on 'starting' so nothing stale is reported in between.
+        void refreshDrivers(dependencies, { quiet: true });
       }
     }),
   );

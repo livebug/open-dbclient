@@ -30,6 +30,7 @@ export class DriverManager implements vscode.Disposable {
   private jarPaths: string[] = [];
   private failures: DriverFailure[] = [];
   private registration: Promise<DriverRegistrationResult> | undefined;
+  private readonly subscriptions: vscode.Disposable[] = [];
 
   private readonly emitter = new vscode.EventEmitter<void>();
   /** Fires after the loaded driver set changes. */
@@ -38,7 +39,23 @@ export class DriverManager implements vscode.Disposable {
   constructor(
     private readonly context: vscode.ExtensionContext,
     private readonly bridge: JdbcBridge,
-  ) {}
+  ) {
+    // A (re)started bridge JVM has an empty classpath, so what this object remembers about the old
+    // process is no longer true. Forget it, and let the caller that needs a driver ask again - the
+    // alternative is a connection that fails with "driver is not loaded" although the UI still lists it.
+    this.subscriptions.push(
+      this.bridge.onDidChangeState((state) => {
+        if (state === 'starting' || state === 'stopped' || state === 'failed') {
+          if (this.drivers.length > 0 || this.jarPaths.length > 0 || this.failures.length > 0) {
+            this.drivers = [];
+            this.jarPaths = [];
+            this.failures = [];
+            this.emitter.fire();
+          }
+        }
+      }),
+    );
+  }
 
   /** The managed folder users drop jars into. */
   get driverFolder(): string {
@@ -88,13 +105,23 @@ export class DriverManager implements vscode.Disposable {
       .map((name) => name.trim())
       .filter((name) => name.length > 0);
 
-    log.debug(`Registering ${jarPaths.length} driver jar(s) and ${driverClassNames.length} explicit class name(s)`);
+    log.info(
+      t(
+        'Loading {0} driver jar(s) and {1} explicit class name(s)',
+        jarPaths.length,
+        driverClassNames.length,
+      ),
+    );
     log.debug(t('Scanning for driver jars took {0} ms', Date.now() - startedAt));
 
-    const result = await this.bridge.request<DriverRegistrationResult>(Methods.driverRegister, {
-      jarPaths,
-      driverClassNames,
-    });
+    // A timeout rather than waiting forever: registering scans jars and instantiates drivers, and a
+    // driver that blocks in its static initialiser would otherwise leave activation stuck with no
+    // driver classpath and no message. The bridge may still finish; a later connect reloads anyway.
+    const result = await this.bridge.request<DriverRegistrationResult>(
+      Methods.driverRegister,
+      { jarPaths, driverClassNames },
+      { timeoutMs: 120_000 },
+    );
 
     this.jarPaths = result.jarPaths ?? jarPaths;
     this.drivers = result.drivers ?? [];
@@ -324,6 +351,9 @@ export class DriverManager implements vscode.Disposable {
   }
 
   dispose(): void {
+    for (const subscription of this.subscriptions) {
+      subscription.dispose();
+    }
     this.emitter.dispose();
   }
 }

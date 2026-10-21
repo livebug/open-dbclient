@@ -115,6 +115,7 @@ export const Config = {
   ddlQueries: `${EXTENSION_ID}.ddl.queries`,
   metadataQueries: `${EXTENSION_ID}.metadata.queries`,
   metadataTimeoutSeconds: `${EXTENSION_ID}.metadata.timeoutSeconds`,
+  metadataCacheMinutes: `${EXTENSION_ID}.metadata.cacheMinutes`,
   customActions: `${EXTENSION_ID}.actions`,
   intellisenseEnabled: `${EXTENSION_ID}.intellisense.enabled`,
   intellisensePrefetchTables: `${EXTENSION_ID}.intellisense.prefetchTables`,

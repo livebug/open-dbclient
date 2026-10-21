@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
 
 import { Commands, ContextKeys } from '../constants';
+import { ErrorCodes } from '../bridge/protocol';
+import { RpcError } from '../bridge/RpcChannel';
 import type { ConnectionProfile, ConnectionProfileDraft } from '../model/ConnectionProfile';
 import { profileLabel } from '../model/ConnectionProfile';
 import { ConnectionFormPanel, valuesFor } from '../webview/ConnectionFormPanel';
@@ -30,7 +32,6 @@ export function registerConnectionCommands(dependencies: CommandDependencies): v
     // and title-bar buttons reported "command not found" - including the driver folder link that is
     // the whole first-run call to action in the empty view. The helpers at the bottom of this file are
     // what the "no driver is loaded" dialog already calls for the same follow-up work.
-    register(Commands.refreshAll, () => dependencies.tree.refresh()),
     register(Commands.refreshNode, (node) => refreshNode(dependencies, asNode(node))),
     register(Commands.openDriverFolder, () => dependencies.drivers.openFolder()),
     register(Commands.addDriverJar, () => addDriverJar(dependencies)),
@@ -270,13 +271,39 @@ async function runConnect(
     { location: vscode.ProgressLocation.Notification, title: t('Connecting to {0}', profileLabel(profile)) },
     async () => {
       try {
+        // The driver lives in the bridge JVM, and a restarted JVM starts empty. Ask for a reload
+        // before the first attempt when the class this profile names is not currently known, so the
+        // user gets a connection instead of "driver is not loaded" followed by a manual refresh.
+        if (!dependencies.drivers.find(profile.driverClassName)) {
+          try {
+            await dependencies.drivers.register();
+          } catch (error) {
+            // Connect anyway: its own failure is the one worth reporting, and it says what is wrong
+            // with the driver or the Java installation rather than just that the reload failed.
+            log.warn(t('Could not load JDBC drivers: {0}', describeError(error)));
+          }
+        }
         const result = await dependencies.connections.connect(profile);
         void vscode.window.showInformationMessage(
           t('Connected to {0} in {1} ms.', result.capabilities.description, result.connectMillis),
         );
-      } catch {
+      } catch (error) {
         // connections.connect already reported the failure to the user.
         log.debug(t("Connect to '{0}' did not succeed", profileLabel(profile)));
+        if (error instanceof RpcError && error.code === ErrorCodes.driverNotFound) {
+          // The bridge was replaced between the check above and the request. Reload once and retry
+          // quietly: the failure this time was our own stale view, not the database refusing.
+          log.debug(t('The bridge lost its drivers; reloading them and retrying the connection'));
+          try {
+            await dependencies.drivers.register();
+            await dependencies.connections.connect(profile, { silent: true });
+            void vscode.window.showInformationMessage(
+              t('Connected to {0}.', profileLabel(profile)),
+            );
+          } catch (retryError) {
+            log.warn(t('Could not load JDBC drivers: {0}', describeError(retryError)));
+          }
+        }
       }
     },
   );

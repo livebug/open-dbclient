@@ -462,6 +462,10 @@ export const ZH_CN: Record<string, string> = {
   // ---- 日志:驱动 ----
   'Loaded {0} JDBC driver(s) in {1} ms': '已加载 {0} 个 JDBC 驱动(用时 {1} ms)',
   'Scanning for driver jars took {0} ms': '扫描驱动 jar 用时 {0} ms',
+  'Loading {0} driver jar(s) and {1} explicit class name(s)':
+    '正在加载 {0} 个驱动 jar 与 {1} 个显式类名',
+  'Completion prefetch stopped after {0} table(s); only part of the database is suggested':
+    '补全预取在 {0} 张表后停止;只会提示数据库的一部分',
   'Java lookup took {0} ms': '查找 Java 用时 {0} ms',
   'Driver not loaded ({0}) from {1}: {2}': '驱动未加载({0},来自 {1}):{2}',
   'an unknown class name': '类名未知',
@@ -489,6 +493,9 @@ export const ZH_CN: Record<string, string> = {
   "Connected '{0}' in {1} ms: {2}": '已连接「{0}」,用时 {1} ms:{2}',
   "'{0}' has no usable stored password; asking for one before connecting":
     '「{0}」没有可用的已存密码,先询问密码再连接',
+  'The bridge lost its drivers; reloading them and retrying the connection':
+    '桥丢失了驱动,正在重新加载并重试连接',
+  'Connected to {0}.': '已连接 {0}。',
   "Connecting to '{0}' ({1})": '正在连接「{0}」({1})',
   'Connection target: {0} -> {1}': '连接目标:{0} -> {1}',
   'Connection target: {0} -> {1} as {2}': '连接目标:{0} -> {1}(用户 {2})',

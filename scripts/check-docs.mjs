@@ -176,14 +176,31 @@ const sourceText = readdirSync(join(root, 'src'), { recursive: true })
   .join('\n');
 const registeredKeys = new Set();
 const registeredIds = new Set();
+// Counted as well as collected: `registerCommand` throws when an id is already taken, and that throw
+// aborts the rest of `activate` - which is how one duplicate registration (refreshAll) shipped a build
+// where no driver jar was ever handed to the bridge. A missing handler is loud at click time; a
+// duplicate one is loud at startup and silently takes everything after it down.
+const registrationCounts = new Map();
 for (const [, key, literal] of sourceText.matchAll(
   /\bregister(?:Command)?\(\s*(?:Commands\.([A-Za-z0-9_]+)|'([^']+)')/g,
 )) {
+  const id = key !== undefined ? `Commands.${key}` : literal;
+  registrationCounts.set(id, (registrationCounts.get(id) ?? 0) + 1);
   if (key !== undefined) {
     registeredKeys.add(key);
   } else {
     registeredIds.add(literal);
   }
+}
+const duplicateRegistrations = [...registrationCounts]
+  .filter(([, count]) => count > 1)
+  .map(([id]) => id);
+if (duplicateRegistrations.length > 0) {
+  fail(
+    `commands registered more than once, so activation fails at the first duplicate: ${duplicateRegistrations.join(', ')}`,
+  );
+} else {
+  check('no command is registered twice');
 }
 const unregisteredCommands = (pkg.contributes.commands ?? [])
   .map((entry) => entry.command)

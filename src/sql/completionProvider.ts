@@ -8,6 +8,16 @@ import { analyzeSqlContext, type SqlContext } from './sqlContext';
 import { t } from '../util/i18n';
 
 /**
+ * How long a completion may wait for a cold cache.
+ *
+ * Completion runs on every keystroke; a warehouse prefetch can take tens of seconds. Waiting for the
+ * whole read makes typing feel broken, so the request waits only briefly, answers with what has been
+ * published (often the schema names, then tables as each one arrives), and the load carries on in the
+ * background.
+ */
+const CACHE_WAIT_MS = 1_000;
+
+/**
  * SQL completion.
  *
  * Runs entirely in the extension host. Completion is latency-sensitive - a suggestion list that
@@ -83,9 +93,34 @@ export class SqlCompletionProvider implements vscode.CompletionItemProvider, vsc
   // candidates
   // ------------------------------------------------------------------
 
+  /**
+   * The table list for a connection, waiting only briefly for a cold or expired cache.
+   *
+   * A stale list is returned immediately while a refresh runs in the background: five-minute-old table
+   * names beat an empty list, and the refresh replaces them when it is done. A cold list waits up to
+   * {@link CACHE_WAIT_MS} for the load to publish its first batch.
+   */
+  private async cachedTables(connectionId: string): Promise<CachedTables | undefined> {
+    const fresh = this.cache.tablesFor(connectionId);
+    if (fresh) {
+      return fresh;
+    }
+
+    const stale = this.cache.tablesFor(connectionId, { allowStale: true });
+    const load = this.cache.ensureTables(connectionId).catch(() => undefined);
+    if (stale) {
+      return stale;
+    }
+
+    await Promise.race([
+      load,
+      new Promise<void>((resolve) => setTimeout(resolve, CACHE_WAIT_MS)),
+    ]);
+    return this.cache.tablesFor(connectionId, { allowStale: true });
+  }
+
   private async tableItems(connectionId: string, range: vscode.Range): Promise<vscode.CompletionItem[]> {
-    await this.cache.ensureTables(connectionId);
-    const tables = this.cache.tablesFor(connectionId);
+    const tables = await this.cachedTables(connectionId);
     if (!tables) {
       return [];
     }
@@ -125,8 +160,7 @@ export class SqlCompletionProvider implements vscode.CompletionItemProvider, vsc
       return undefined;
     }
 
-    await this.cache.ensureTables(connectionId);
-    const tables = this.cache.tablesFor(connectionId);
+    const tables = await this.cachedTables(connectionId);
     if (!tables) {
       return undefined;
     }

@@ -227,6 +227,11 @@ JDBC 桥进程自己输出、被原样转发的行(带 `[bridge]` / `[stderr]` �
 - 元数据缓存:表名列表在连接建立后**按 schema 分批**预加载(可用 `intellisense.prefetchTables` 关掉),
   缓存默认 `5` 分钟内有效(`metadata.cacheMinutes`),过期后下次补全再读,手动刷新则立即清空;
   列信息按「连接 + 目录 + 模式 + 表」做 LRU 缓存(`intellisense.columnCacheLimit`)
+- **补全不会为一次按键等整个预取**:最多等 1 秒,先给已经就绪的部分(schema 名、已分批到达的
+  表名);预取继续在后台跑,下一键就能看到更多。缓存过期时也先给旧列表,同时后台刷新
+- 预取全部失败时不会把空列表当成结果缓存,而是在输出通道留一行
+  `Completion has no table list for ...` 说明原因(超时、规则报错等);若是超时,调大
+  `metadata.timeoutSeconds`,或把慢读换成 `metadata.queries` 规则
 - **“这个表没有列”也会被记住**:别名、CTE 名、写错的名字不会每敲一个字就查一次数据库 ——
   这类名字每次都只会回答“没有列”,以前正是这样在每次按键都发一次查询
 - 限定名(`public.users`)会**拆成模式 + 表**再去问驱动:JDBC 的 `getColumns` 是拿表名去匹配模式的,
@@ -877,7 +882,7 @@ npm run icon            # 重新生成扩展图标   → media/icon/icon.png
 ### 测试
 
 ```bash
-npm test        # 类型检查 + 文档/文案检查 + 77 项 Java 测试 + 224 项 TS 单测(无需数据库)
+npm test        # 类型检查 + 文档/文案检查 + 77 项 Java 测试 + 225 项 TS 单测(无需数据库)
 npm run verify  # 上面全部 + 构建桥 + 冒烟检查
 ```
 

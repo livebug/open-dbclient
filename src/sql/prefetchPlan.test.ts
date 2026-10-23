@@ -23,7 +23,12 @@ test('without a schema level the read is split by catalog instead', () => {
 });
 
 test('a fixed catalog is never split: that driver cannot read across catalogs', () => {
-  assert.deepEqual(prefetchScopes([], ['app', 'reporting'], true), [{}]);
+  assert.deepEqual(prefetchScopes(['public'], ['app', 'reporting'], true), [{}]);
+});
+
+test('no schema and a fixed catalog means no safe read, not one whole-catalog read', () => {
+  assert.deepEqual(prefetchScopes([], ['app'], true), []);
+  assert.deepEqual(prefetchScopes([], ['app', 'reporting'], true), []);
 });
 
 test('nothing to split by means one whole-database read', () => {

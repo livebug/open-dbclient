@@ -11,7 +11,7 @@
 | 步骤 | 联网时 | 断网时 |
 |---|---|---|
 | `npm ci` | ✅ | ❌ **只有这一步** |
-| `npm test`(类型检查 + 文档/文案检查 + 77 项 Java 测试 + 224 项 TS 测试) | ✅ | ✅ |
+| `npm test`(类型检查 + 文档/文案检查 + 77 项 Java 测试 + 225 项 TS 测试) | ✅ | ✅ |
 | `npm run smoke -- <驱动目录>`(131 项端到端检查) | ✅ | ✅ |
 | `npm run bridge:compile`(Java 桥构建) | ✅ | ✅ |
 | `npm run package`(打 VSIX) | ✅ | ✅ |

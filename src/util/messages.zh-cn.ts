@@ -439,7 +439,6 @@ export const ZH_CN: Record<string, string> = {
   'table types': '表类型',
   'Completion cache: {0} table(s) for {1} in {2} ms': '补全缓存:连接 {1} 有 {0} 张表(用时 {2} ms)',
   'Prefetching the table list of {0} for completion': '正在预加载 {0} 的补全用表列表',
-  'Could not preload tables for completion after {0} ms: {1}': '预加载补全用的表列表失败(已尝试 {0} ms):{1}',
   "Could not load columns of '{0}' after {1} ms: {2}": '读取 {0} 的列失败(已尝试 {1} ms):{2}',
   'Loaded {0} column(s) of {1} in {2} ms': '已读取 {1} 的 {0} 列(用时 {2} ms)',
   "Could not expand '{0}' after {1} ms": '展开「{0}」失败(已尝试 {1} ms)',
@@ -464,8 +463,13 @@ export const ZH_CN: Record<string, string> = {
   'Scanning for driver jars took {0} ms': '扫描驱动 jar 用时 {0} ms',
   'Loading {0} driver jar(s) and {1} explicit class name(s)':
     '正在加载 {0} 个驱动 jar 与 {1} 个显式类名',
-  'Completion prefetch stopped after {0} table(s); only part of the database is suggested':
-    '补全预取在 {0} 张表后停止;只会提示数据库的一部分',
+  'Completion prefetch stopped early ({0} table(s), {1} ms); only part of the database is suggested':
+    '补全预取提前停止({0} 张表,{1} ms);只会提示数据库的一部分',
+  'the schema list is empty, so the table list was not read (a whole-catalog read is unsafe)':
+    '模式列表为空,因此没有读取表列表(整库读取不安全)',
+  'every table read failed': '所有表读取都失败了',
+  'Completion has no table list for {0} after {1} ms: {2}':
+    '补全没有 {0} 的表列表(已尝试 {1} ms):{2}',
   'Java lookup took {0} ms': '查找 Java 用时 {0} ms',
   'Driver not loaded ({0}) from {1}: {2}': '驱动未加载({0},来自 {1}):{2}',
   'an unknown class name': '类名未知',

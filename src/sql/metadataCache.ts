@@ -1,6 +1,5 @@
 import type { ColumnInfo, TableInfo } from '../bridge/protocol';
-import type { DescribedTable } from '../model/tableDetails';
-import type { MetadataService, TableRequest } from '../service/MetadataService';
+import type { MetadataService } from '../service/MetadataService';
 import type { ConnectionService } from '../service/ConnectionService';
 import { isFresh } from './cacheAge';
 import { prefetchScopes } from './prefetchPlan';
@@ -73,6 +72,15 @@ export interface MetadataCacheOptions {
 const PREFETCH_TABLE_BUDGET = 20_000;
 
 /**
+ * Stop starting new per-schema reads after this long.
+ *
+ * The table budget bounds memory; this bounds time. A slow database can take minutes to walk every
+ * schema, and a prefetch that runs for ten of them keeps the extension from ever retrying with a
+ * fresher view. What has arrived by then is published and good enough to complete from.
+ */
+const PREFETCH_TIME_BUDGET_MS = 60_000;
+
+/**
  * Caches schema information for completion.
  *
  * Three tiers, because they cost very different amounts to obtain:
@@ -119,10 +127,22 @@ export class MetadataCache {
     return isFresh(loadedAt, this.ttlMs(), this.now());
   }
 
-  /** Table names known for a connection, or undefined when nothing fresh has been loaded yet. */
-  tablesFor(connectionId: string): CachedTables | undefined {
+  /**
+   * Table names known for a connection.
+   *
+   * @param options.allowStale serve an expired listing too. Completion uses this while a refresh is
+   *        in flight: a five-minute-old table name is a better suggestion than none, and the refresh
+   *        replaces it when it finishes.
+   */
+  tablesFor(
+    connectionId: string,
+    options?: { allowStale?: boolean },
+  ): CachedTables | undefined {
     const entry = this.tables.get(connectionId);
-    return entry !== undefined && this.fresh(entry.loadedAt) ? entry.data : undefined;
+    if (entry === undefined) {
+      return undefined;
+    }
+    return options?.allowStale === true || this.fresh(entry.loadedAt) ? entry.data : undefined;
   }
 
   /**
@@ -232,56 +252,87 @@ export class MetadataCache {
       ),
     );
     try {
-      const schemas = await this.metadata.schemas(scope).catch(() => [] as string[]);
-      // No type filter: the completion list should include views, and every driver labels them
-      // differently, so filtering would silently hide objects on some databases.
-      const allTables: TableInfo[] = [];
-      let truncated = false;
-
-      const readInto = async (request: TableRequest): Promise<void> => {
-        const batch = await this.metadata.tables(request).catch(() => [] as DescribedTable[]);
-        allTables.push(...batch);
-      };
-
-      // See prefetchScopes: one read per schema (or per catalog) rather than one over the whole
-      // database, because a driver asked for everything at once materialises the whole result before
-      // returning a row. Catalog names are only needed when there is no schema level to split on.
+      // Not caught here on purpose: a schema list that could not be read is different from a database
+      // that has none, and that difference decides whether splitting the table read is safe.
+      const schemas = await this.metadata.schemas(scope);
       const catalogs =
         schemas.length <= 1 && scope.catalog === undefined
           ? await this.metadata.catalogs(scope).catch(() => [] as string[])
           : [];
-      for (const part of prefetchScopes(schemas, catalogs, scope.catalog !== undefined)) {
+      // See prefetchScopes: one read per schema (or per catalog) rather than one over the whole
+      // database, because a driver asked for everything at once materialises the whole result before
+      // returning a row. An empty plan means there is no safe split and nothing is read at all.
+      const scopes = prefetchScopes(schemas, catalogs, scope.catalog !== undefined);
+      if (scopes.length === 0) {
+        throw new Error(
+          t(
+            'the schema list is empty, so the table list was not read (a whole-catalog read is unsafe)',
+          ),
+        );
+      }
+
+      // No type filter: the completion list should include views, and every driver labels them
+      // differently, so filtering would silently hide objects on some databases.
+      const allTables: TableInfo[] = [];
+      let truncated = false;
+      let failedReads = 0;
+
+      // Published after every batch, so a completion request can offer what has arrived while the
+      // rest is still being read. Replacing the whole entry only at the end is what made a slow
+      // database look like a broken completion list.
+      const publish = (): void => {
+        this.tables.set(connectionId, {
+          data: {
+            names: allTables.map((table) => table.name),
+            // With exactly one schema, a bare table name is unambiguous; with several it is not, so
+            // no default is offered and the completion list stays honest about what it resolves.
+            defaultSchema: schemas.length === 1 ? schemas[0] : undefined,
+            qualifiers: buildQualifiers(schemas, allTables),
+          },
+          loadedAt: this.now(),
+        });
+      };
+      publish();
+
+      for (const part of scopes) {
         if (allTables.length >= PREFETCH_TABLE_BUDGET) {
           truncated = true;
           break;
         }
-        await readInto({ ...scope, ...part });
+        if (Date.now() - startedAt >= PREFETCH_TIME_BUDGET_MS) {
+          truncated = true;
+          break;
+        }
+        const batch = await this.metadata.tables({ ...scope, ...part }).catch(() => undefined);
+        if (batch === undefined) {
+          failedReads++;
+          continue;
+        }
+        allTables.push(...batch);
+        publish();
       }
 
       if (truncated) {
         log.warn(
           t(
-            'Completion prefetch stopped after {0} table(s); only part of the database is suggested',
-            PREFETCH_TABLE_BUDGET,
+            'Completion prefetch stopped early ({0} table(s), {1} ms); only part of the database is suggested',
+            allTables.length,
+            Date.now() - startedAt,
           ),
         );
       }
 
-      const names = allTables.map((table) => table.name);
-      this.tables.set(connectionId, {
-        data: {
-          names,
-          // With exactly one schema, a bare table name is unambiguous; with several it is not, so no
-          // default is offered and the completion list stays honest about what it can resolve.
-          defaultSchema: schemas.length === 1 ? schemas[0] : undefined,
-          qualifiers: buildQualifiers(schemas, allTables),
-        },
-        loadedAt: this.now(),
-      });
+      if (allTables.length === 0 && failedReads > 0) {
+        // Every read failed. Leaving an empty-but-successful entry behind is what turns this into a
+        // silent, keyword-only completion list for the whole lifetime of the cache.
+        this.tables.delete(connectionId);
+        throw new Error(t('every table read failed'));
+      }
+
       log.debug(
         t(
           'Completion cache: {0} table(s) for {1} in {2} ms',
-          names.length,
+          allTables.length,
           this.connections.displayNameOf(connectionId) ?? connectionId,
           Date.now() - startedAt,
         ),
@@ -290,8 +341,15 @@ export class MetadataCache {
       // Remembered, because completion runs on every keystroke and this failed once already. The
       // timestamp lets the failure age out with the listing instead of blocking retries forever.
       this.failedTables.set(connectionId, this.now());
-      log.debug(
-        t('Could not preload tables for completion after {0} ms: {1}', Date.now() - startedAt, String(error)),
+      // Visible at the default level: "completion only shows keywords" is otherwise indistinguishable
+      // from "there is nothing to complete", and this line is where the reason can be read.
+      log.warn(
+        t(
+          'Completion has no table list for {0} after {1} ms: {2}',
+          this.connections.displayNameOf(connectionId) ?? connectionId,
+          Date.now() - startedAt,
+          String(error),
+        ),
       );
     }
   }

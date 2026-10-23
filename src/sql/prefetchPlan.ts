@@ -37,5 +37,12 @@ export function prefetchScopes(
   if (!catalogIsFixed && catalogs.length > 1) {
     return catalogs.map((catalog) => ({ catalog }));
   }
+  if (schemas.length === 0 && catalogIsFixed) {
+    // The connection names one catalog it can read inside, and no schema came back. Falling through to
+    // `[{}]` would ask the driver for every table of that catalog in one call, which is the read that
+    // materialises a warehouse in the bridge's heap. An empty list here means "do not read", and the
+    // caller reports it instead.
+    return [];
+  }
   return [{}];
 }
